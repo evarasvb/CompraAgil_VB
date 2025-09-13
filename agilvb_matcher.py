@@ -78,6 +78,25 @@ def _normalize(text: str) -> str:
     # Replace non-alphanumeric characters with spaces
     return re.sub(r"[^A-Z0-9 ]", " ", text_no_accents)
 
+# A mapping of domain-specific synonyms used to expand keyword searches.
+# Keys and values are normalized (uppercase, no accents) to align with the
+# output of the `_normalize` function.  When extracting keywords from an
+# input description, any token that appears in this dictionary will be
+# expanded with its associated synonyms to broaden the candidate search.
+SYNONYMS: Dict[str, List[str]] = {
+    # Storage units and filing furniture
+    "CAJONERA": ["GABINETE", "ARCHIVERO"],
+    "GABINETE": ["CAJONERA", "ARCHIVERO"],
+    "ARCHIVERO": ["CAJONERA", "GABINETE"],
+    # Desks and tables
+    "ESCRITORIO": ["MESA"],
+    # Walkers / mobility aids
+    "ANDADOR": ["CAMINADOR"],
+    # Boxes and containers
+    "CAJA": ["ARCHIVADOR"],
+    # Other potential synonyms can be added here as needed
+}
+
 
 def _extract_keywords(text: str) -> List[str]:
     """Extract significant keywords from a product description.
@@ -95,12 +114,19 @@ def _extract_keywords(text: str) -> List[str]:
     """
     normalized = _normalize(text)
     tokens = normalized.split()
-    keywords = []
+    keywords: List[str] = []
     for token in tokens:
         # Skip numbers and very short words
         if token.isdigit() or len(token) < 3:
             continue
+        # Always include the token itself
         keywords.append(token)
+        # Expand with synonyms if available.  Since both the token and the
+        # synonym keys are normalized to uppercase without accents, we can
+        # safely look up in the SYNONYMS dictionary.
+        synonyms = SYNONYMS.get(token)
+        if synonyms:
+            keywords.extend(synonyms)
     return keywords
 
 
