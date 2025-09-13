@@ -132,7 +132,23 @@ class PriceMatcher:
         self.tax_rate = tax_rate
         self.df = self._load_catalogue(price_file)
         # Precompute normalized product names for matching
+        # Using a copy of the original strings to avoid modifying the underlying DataFrame order
         self.df['NORMALIZED'] = self.df['PRODUCTO'].astype(str).apply(_normalize)
+
+        # If a brand column exists, compute a normalized version.  Not all price lists
+        # include a ``MARCA`` column (our normalized file only exposes PRODUCTO and
+        # precio venta Neto), so this step is conditional.  The normalized brand is
+        # stored in the ``BRAND_NORMALIZED`` column for quick substring checks.
+        if 'MARCA' in self.df.columns:
+            self.df['BRAND_NORMALIZED'] = self.df['MARCA'].astype(str).apply(_normalize)
+        else:
+            # When no brand is provided, fill with empty strings to simplify logic later
+            self.df['BRAND_NORMALIZED'] = ''
+
+        # Extract numeric tokens from each product description.  These often
+        # represent dimensions (e.g. 120x60x75), capacities, quantities, etc.
+        # Precomputing them avoids repeated regex work inside the matching loop.
+        self.df['MEASUREMENTS'] = self.df['NORMALIZED'].apply(self._extract_measurements)
 
     @staticmethod
     def _load_catalogue(file_path: str) -> pd.DataFrame:
@@ -151,6 +167,80 @@ class PriceMatcher:
         df = df.dropna(subset=['PRODUCTO']).reset_index(drop=True)
         return df
 
+    @staticmethod
+    def _extract_measurements(text: str) -> List[str]:
+        """Extract numeric tokens from a normalized product description.
+
+        This helper identifies standalone numbers in the text.  It is used to
+        detect dimensional information (e.g. 120, 60, 75) so that matches with
+        corresponding measurements can be prioritized.
+
+        Args:
+            text: A normalized string (output of ``_normalize``).
+
+        Returns:
+            A list of strings representing numbers found in the text.  Leading
+            zeros are retained to preserve exact matches.
+        """
+        # Find sequences of digits.  Because ``_normalize`` converts all
+        # punctuation to spaces, patterns like ``120X60X75`` will become
+        # ``120X60X75`` but X remains, so we capture digits only.
+        return re.findall(r"\d+", text)
+
+    def _compute_score(
+        self,
+        query_norm: str,
+        query_meas: List[str],
+        brand_tokens_in_query: set,
+        candidate_norm: str,
+        candidate_meas: List[str],
+        candidate_brand_norm: str,
+    ) -> float:
+        """Compute a composite similarity score between a query and a candidate.
+
+        The base similarity is the SequenceMatcher ratio between the normalized
+        query and the normalized product name.  This score is then adjusted
+        based on brand and dimensional overlaps:
+
+        * **Brand bonus**: if the candidate's brand appears in the query,
+          a fixed bonus is added.
+        * **Measurement bonus**: based on the proportion of numeric tokens in
+          the query that also appear in the candidate description.
+
+        Args:
+            query_norm: Normalized query string.
+            query_meas: List of numeric tokens extracted from the query.
+            brand_tokens_in_query: A set of brand names present in the query.
+            candidate_norm: Normalized candidate string.
+            candidate_meas: List of numeric tokens from the candidate.
+            candidate_brand_norm: Normalized brand of the candidate.
+
+        Returns:
+            A similarity score between 0 and 1 (values above 1 are clipped).
+        """
+        # Base similarity from fuzzy matching
+        base_ratio = SequenceMatcher(None, query_norm, candidate_norm).ratio()
+
+        # Brand bonus: if candidate's brand is in the query, add a fixed bonus
+        brand_bonus = 0.0
+        if candidate_brand_norm and candidate_brand_norm in brand_tokens_in_query:
+            brand_bonus = 0.15
+
+        # Measurement bonus: proportion of shared numeric tokens
+        meas_bonus = 0.0
+        if query_meas and candidate_meas:
+            # Compute intersection of numeric tokens
+            intersection = set(query_meas).intersection(candidate_meas)
+            if intersection:
+                # Share of query measurements that also appear in the candidate
+                proportion = len(intersection) / len(query_meas)
+                # Weight the proportion so that full match yields up to 0.20
+                meas_bonus = 0.20 * proportion
+
+        # Sum the components and clip to 1
+        score = base_ratio + brand_bonus + meas_bonus
+        return min(score, 1.0)
+
     def _fuzzy_match(self, query: str, candidates: pd.DataFrame, top_n: int = 5) -> List[MatchResult]:
         """Find the top N fuzzy matches for a query string.
 
@@ -162,13 +252,38 @@ class PriceMatcher:
         Returns:
             A list of MatchResult sorted by score descending.
         """
-        # Use SequenceMatcher to compute a ratio between the query and each candidate
-        ratios: List[Tuple[int, float]] = []
+        # Precompute measurements and brand tokens from the query
+        query_meas = self._extract_measurements(query)
+        # Determine which known brands appear in the query.  Use a set for
+        # fast membership tests.  We populate the set with any candidate brand
+        # that is a substring of the query.  Note: we don't use a global set
+        # of all brands because the candidate list may be filtered.
+        # Instead, we'll look up each candidate's brand during scoring.
+        # Compute similarity scores for each candidate
+        scores: List[Tuple[int, float]] = []
         for idx, row in candidates.iterrows():
-            ratio = SequenceMatcher(None, query, row['NORMALIZED']).ratio()
-            ratios.append((idx, ratio))
-        # Sort by ratio descending and take top_n
-        top_indices = sorted(ratios, key=lambda x: x[1], reverse=True)[:top_n]
+            candidate_norm: str = row['NORMALIZED']
+            candidate_meas: List[str] = row['MEASUREMENTS']
+            candidate_brand_norm: str = row['BRAND_NORMALIZED']
+            # Determine if candidate's brand appears in the query (if any)
+            # We only need to check once per candidate
+            brand_tokens_in_query = set()
+            if candidate_brand_norm:
+                if candidate_brand_norm in query:
+                    brand_tokens_in_query.add(candidate_brand_norm)
+            # Compute composite score
+            score = self._compute_score(
+                query_norm=query,
+                query_meas=query_meas,
+                brand_tokens_in_query=brand_tokens_in_query,
+                candidate_norm=candidate_norm,
+                candidate_meas=candidate_meas,
+                candidate_brand_norm=candidate_brand_norm,
+            )
+            scores.append((idx, score))
+
+        # Sort by score descending and take top_n
+        top_indices = sorted(scores, key=lambda x: x[1], reverse=True)[:top_n]
         matches: List[MatchResult] = []
         for idx, score in top_indices:
             prod_row = candidates.loc[idx]
