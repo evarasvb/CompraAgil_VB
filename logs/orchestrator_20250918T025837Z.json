@@ -1,0 +1,40 @@
+{
+  "timestamp": "2025-09-18T02:58:37.986000Z",
+  "context": {
+    "num_keywords": 3,
+    "num_publications": 2,
+    "num_exclusions": 4
+  },
+  "results": [
+    {
+      "agent": "wherex",
+      "status": "missing_creds",
+      "count_keywords": 3
+    },
+    {
+      "agent": "senegocia",
+      "status": "missing_creds",
+      "exclusions": 4
+    },
+    {
+      "agent": "mp",
+      "status": "missing_creds",
+      "details": {
+        "keywords": [
+          "toner",
+          "resma",
+          "artículos de oficina"
+        ]
+      }
+    },
+    {
+      "agent": "meta",
+      "status": "missing_creds",
+      "to_publish": 2
+    },
+    {
+      "agent": "linkedin",
+      "status": "missing_creds"
+    }
+  ]
+}
