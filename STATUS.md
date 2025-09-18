@@ -1,0 +1,11 @@
+# STATUS
+
+Updated: 2025-09-18T02:58:37.978993Z
+
+- MERCADOPUBLICO_TICKET: missing
+- WHEREX_USER: missing
+- WHEREX_PASSWORD: missing
+- SENEGOCIA_USER: missing
+- SENEGOCIA_PASSWORD: missing
+- META_TOKEN: missing
+- LINKEDIN_TOKEN: missing
