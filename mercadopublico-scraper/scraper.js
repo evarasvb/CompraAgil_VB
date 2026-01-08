@@ -9,6 +9,7 @@ const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, to
 function parseArgs(argv) {
   const args = {
     test: false,
+    testSimple: false,
     headed: false,
     from: null,
     to: null,
@@ -20,6 +21,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--test') args.test = true;
+    else if (a === '--test-simple') args.testSimple = true;
     else if (a === '--headed') args.headed = true;
     else if (a === '--from') args.from = argv[++i] || null;
     else if (a === '--to') args.to = argv[++i] || null;
@@ -491,7 +493,7 @@ async function fetchExistingCodigos(supabase, codigos) {
 async function main() {
   const args = parseArgs(process.argv);
 
-  const incrementalMode = resolveIncrementalMode(args);
+  const incrementalMode = args.testSimple ? false : resolveIncrementalMode(args);
   const now = new Date();
   const incrementalSince = new Date(now.getTime() - 75 * 60 * 1000);
 
@@ -511,9 +513,9 @@ async function main() {
       }
     : baseParams;
 
-  // En --test permitimos correr sin credenciales y solo loguear (dry-run).
-  const supabase = getSupabaseClientOrNull({ allowNull: args.test });
-  const dryRun = !supabase;
+  // --test-simple: NO Supabase, NO detalle (solo listado + conteo)
+  const supabase = args.testSimple ? null : getSupabaseClientOrNull({ allowNull: args.test });
+  const dryRun = args.testSimple ? true : !supabase;
 
   const isHeadless = args.headed ? false : config.headless;
 
@@ -534,7 +536,7 @@ async function main() {
 
   let totalResultados = null;
 
-  const maxPagesArg = args.test ? 1 : (Number.isFinite(args.pages) ? args.pages : null);
+  const maxPagesArg = args.testSimple ? 1 : (args.test ? 1 : (Number.isFinite(args.pages) ? args.pages : null));
   let maxPages = maxPagesArg ?? config.maxPages;
 
   try {
@@ -587,6 +589,21 @@ async function main() {
       );
 
       console.log(`Extraídas ${compras.length} compras en la página ${currentPage}`);
+
+      if (args.testSimple) {
+        // Modo “empezar simple”: sin Supabase ni detalle
+        const codigos = compras.map((c) => c.codigo).filter(Boolean);
+        console.log(`[test-simple] Total compras encontradas en listado: ${compras.length}`);
+        console.log(`[test-simple] Códigos (primeros 10): ${codigos.slice(0, 10).join(', ')}`);
+        // guardar en memoria para el resumen final
+        const existing = new Set(allCompras.map((c) => c.codigo));
+        for (const c of compras) if (!existing.has(c.codigo)) allCompras.push(c);
+
+        if (maxPages && currentPage >= maxPages) break;
+        currentPage += 1;
+        await sleepRandom(config.delayBetweenPagesMs.min, config.delayBetweenPagesMs.max);
+        continue;
+      }
 
       // Incremental: filtrar por timestamp (últimos 75 min)
       const comprasFiltradas = incrementalMode

@@ -1,8 +1,17 @@
+function todayYYYYMMDD() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 module.exports = {
   baseUrl: 'https://buscador.mercadopublico.cl/compra-agil',
   params: {
-    date_from: '2025-12-09',
-    date_to: '2026-01-08',
+    // Por defecto: HOY (se puede override con --from/--to)
+    date_from: todayYYYYMMDD(),
+    date_to: todayYYYYMMDD(),
     order_by: 'recent',
     region: 'all',
     status: '2'
@@ -20,8 +29,8 @@ module.exports = {
     return Number.isFinite(n) ? n : 1;
   })(),
   maxRetries: 3,
-  navigationTimeoutMs: 60000,
-  resultsTimeoutMs: 90000,
+  navigationTimeoutMs: 180000,
+  resultsTimeoutMs: 150000,
   delayBetweenPagesMs: {
     min: 2000,
     max: 5000
