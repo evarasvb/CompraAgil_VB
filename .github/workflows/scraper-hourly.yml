@@ -21,7 +21,21 @@ jobs:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: mercadopublico-scraper/package-lock.json
-      
+
+          - name: Crear .env con secrets
+      run: |
+        cd mercadopublico-scraper
+        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+        echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
+        echo "MAX_PAGES=$MAX_PAGES" >> .env
+        echo ".env creado con $(wc -l < .env) variables."
+
+    - name: Instalar Chromium para Puppeteer
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser
+        echo "Chromium instalado: $(chromium-browser --version)"
       - name: Install dependencies
         run: |
           cd mercadopublico-scraper
