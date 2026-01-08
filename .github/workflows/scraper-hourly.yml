@@ -31,15 +31,15 @@ jobs:
           echo "MAX_PAGES=5" >> .env
           echo ".env creado con $(wc -l < .env) variables."
 
-      - name: Instalar Chromium para Puppeteer
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser
-
       - name: Instalar dependencias
         run: |
           cd mercadopublico-scraper
           npm install
+
+      - name: Instalar Chrome para Puppeteer
+        run: |
+          cd mercadopublico-scraper
+          npx puppeteer browsers install chrome
 
       - name: Ejecutar scraper
         run: |
