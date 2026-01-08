@@ -30,13 +30,6 @@ jobs:
     timeout-minutes: 30
 
     env:
-      # Secrets (requeridos)
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-
-      # Modo incremental (requerido por este workflow)
-      INCREMENTAL_MODE: "true"
-
       # Por defecto, procesar todas las páginas necesarias según total/15.
       # Puedes sobreescribir en ejecución manual con el input max_pages.
       MAX_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || 'auto' }}
@@ -67,15 +60,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${SUPABASE_URL:-}" ]]; then
+          if [[ -z "${{ secrets.SUPABASE_URL }}" ]]; then
             echo "::error::Falta el secret SUPABASE_URL (Settings → Secrets and variables → Actions)."
             exit 1
           fi
-          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+          if [[ -z "${{ secrets.SUPABASE_KEY }}" ]]; then
             echo "::error::Falta el secret SUPABASE_KEY (Settings → Secrets and variables → Actions)."
             exit 1
           fi
           echo "Secrets OK (no se imprime su contenido)."
+
+      - name: Crear archivo .env para dotenv
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f mercadopublico-scraper/.env
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> mercadopublico-scraper/.env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> mercadopublico-scraper/.env
+          echo "INCREMENTAL_MODE=true" >> mercadopublico-scraper/.env
+          echo "MAX_PAGES=${MAX_PAGES}" >> mercadopublico-scraper/.env
+
+          echo ".env creado. Variables presentes (sin valores):"
+          grep -E '^(SUPABASE_URL|SUPABASE_KEY|INCREMENTAL_MODE|MAX_PAGES)=' mercadopublico-scraper/.env | cut -d= -f1
+          echo "Líneas en .env: $(wc -l < mercadopublico-scraper/.env)"
 
       - name: Instalar dependencias
         working-directory: mercadopublico-scraper
@@ -92,10 +99,5 @@ jobs:
         run: |
           set -euo pipefail
           echo "Iniciando scraper..."
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.headed }}" == "true" ]]; then
-            # Solo para debug: abre navegador (puede fallar en runners sin display)
-            node scraper.js --incremental --headed
-          else
-            node scraper.js --incremental
-          fi
+          node scraper.js --incremental
 
