@@ -8,13 +8,13 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: cursor/mercadopublico-agile-scraper-4a12
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -22,35 +22,26 @@ jobs:
           cache: 'npm'
           cache-dependency-path: mercadopublico-scraper/package-lock.json
 
-          - name: Crear .env con secrets
-      run: |
-        cd mercadopublico-scraper
-        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
-        echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
-        echo "MAX_PAGES=$MAX_PAGES" >> .env
-        echo ".env creado con $(wc -l < .env) variables."
+      - name: Crear .env con secrets
+        run: |
+          cd mercadopublico-scraper
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+          echo "INCREMENTAL_MODE=true" >> .env
+          echo "MAX_PAGES=5" >> .env
+          echo ".env creado con $(wc -l < .env) variables."
 
-    - name: Instalar Chromium para Puppeteer
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser
-        echo "Chromium instalado: $(chromium-browser --version)"
-      - name: Install dependencies
+      - name: Instalar Chromium para Puppeteer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+
+      - name: Instalar dependencias
         run: |
           cd mercadopublico-scraper
-          npm ci
-      
-      - name: Run scraper
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          INCREMENTAL_MODE: true
-          MAX_PAGES: 5
+          npm install
+
+      - name: Ejecutar scraper
         run: |
           cd mercadopublico-scraper
-          npm start
-      
-      - name: Notify on failure
-        if: failure()
-        run: echo "Scraper failed! Check logs for details."
+          node scraper.js
