@@ -1,0 +1,101 @@
+name: Scraper Compras Ágiles (MercadoPúblico)
+
+on:
+  schedule:
+    # Cada hora (UTC). Si necesitas hora local, ajusta el cron.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Número de páginas a procesar (ej: 1, 5) o 'auto' para calcular."
+        required: false
+        default: "auto"
+      headed:
+        description: "Ejecutar con navegador visible (solo para debug; normalmente false)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: mercadopublico-scraper-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    name: Ejecutar scraper incremental
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Secrets (requeridos)
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+      # Modo incremental (requerido por este workflow)
+      INCREMENTAL_MODE: "true"
+
+      # Por defecto, procesar todas las páginas necesarias según total/15.
+      # Puedes sobreescribir en ejecución manual con el input max_pages.
+      MAX_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || 'auto' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: mercadopublico-scraper/package.json
+
+      - name: Mostrar contexto de ejecución
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fecha (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "Evento: $GITHUB_EVENT_NAME"
+          echo "Repositorio: $GITHUB_REPOSITORY"
+          echo "Ref: $GITHUB_REF"
+          echo "MAX_PAGES=$MAX_PAGES"
+          echo "INCREMENTAL_MODE=$INCREMENTAL_MODE"
+
+      - name: Validar secrets requeridos
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_KEY (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          echo "Secrets OK (no se imprime su contenido)."
+
+      - name: Instalar dependencias
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm install
+
+      - name: Ejecutar scraper (incremental)
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Iniciando scraper..."
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.headed }}" == "true" ]]; then
+            # Solo para debug: abre navegador (puede fallar en runners sin display)
+            node scraper.js --incremental --headed
+          else
+            node scraper.js --incremental
+          fi
+
