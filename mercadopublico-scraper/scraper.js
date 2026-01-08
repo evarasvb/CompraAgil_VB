@@ -13,7 +13,8 @@ function parseArgs(argv) {
     from: null,
     to: null,
     pages: null,
-    out: null
+    out: null,
+    incremental: null
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -24,6 +25,8 @@ function parseArgs(argv) {
     else if (a === '--to') args.to = argv[++i] || null;
     else if (a === '--pages') args.pages = Number.parseInt(argv[++i] || '', 10);
     else if (a === '--out') args.out = argv[++i] || null;
+    else if (a === '--incremental') args.incremental = true;
+    else if (a === '--no-incremental') args.incremental = false;
   }
   return args;
 }
@@ -32,6 +35,57 @@ function chunkArray(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function envBool(name, defaultValue = false) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return defaultValue;
+  const v = String(raw).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(v)) return false;
+  return defaultValue;
+}
+
+function formatDateYYYYMMDD(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseLocalIsoToDate(isoLocal) {
+  if (!isoLocal) return null;
+  const d = new Date(isoLocal); // ISO sin zona => local time
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function resolveIncrementalMode(args) {
+  // Prioridad: flag CLI -> env -> default false
+  if (args.incremental === true) return true;
+  if (args.incremental === false) return false;
+  return envBool('INCREMENTAL_MODE', false);
+}
+
+function withConcurrencyLimit(limit) {
+  let active = 0;
+  const queue = [];
+
+  const next = () => {
+    active -= 1;
+    if (queue.length) queue.shift()();
+  };
+
+  return async function run(task) {
+    if (active >= limit) {
+      await new Promise((resolve) => queue.push(resolve));
+    }
+    active += 1;
+    try {
+      return await task();
+    } finally {
+      next();
+    }
+  };
 }
 
 function buildUrl(pageNumber, params) {
@@ -267,99 +321,195 @@ async function upsertLicitacionItems(supabase, rows) {
   }
 }
 
-async function extractItemsFromDetalle(browser, compra, { timeoutMs }) {
-  if (!compra?.link_detalle || typeof compra.link_detalle !== 'string') {
-    // Sin link: igualmente insertar un item mínimo (cumple con “por cada compra”)
-    return [
-      {
-        licitacion_codigo: compra.codigo,
-        item_index: 1,
-        descripcion: compra.titulo || '',
-        raw: ''
+async function scrapeCompraDetallada(page, codigo) {
+  const url = `https://buscador.mercadopublico.cl/ficha?code=${encodeURIComponent(codigo)}`;
+  await page.goto(url, { waitUntil: 'networkidle2' });
+
+  // Esperar a que cargue el texto clave o al menos el body
+  await page.waitForFunction(() => {
+    const t = (document.body && (document.body.innerText || document.body.textContent)) || '';
+    return /Listado de productos solicitados/i.test(t) || t.length > 200;
+  }, { timeout: config.resultsTimeoutMs });
+
+  const detalle = await page.evaluate(() => {
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+    function textOf(el) {
+      return norm(el?.innerText || el?.textContent || '');
+    }
+
+    function findHeading(textNeedle) {
+      const needle = textNeedle.toLowerCase();
+      const candidates = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p,strong'));
+      return candidates.find((el) => textOf(el).toLowerCase().includes(needle)) || null;
+    }
+
+    function findTableNear(anchorEl) {
+      if (!anchorEl) return null;
+      // buscar tabla en ancestros cercanos y siguientes
+      let node = anchorEl;
+      for (let i = 0; i < 6 && node; i++) {
+        const table = node.querySelector && node.querySelector('table');
+        if (table) return table;
+        node = node.parentElement;
       }
-    ];
-  }
-  const url = compra.link_detalle.startsWith('http')
-    ? compra.link_detalle
-    : new URL(compra.link_detalle, config.baseUrl).toString();
+      // fallback: primera tabla de la página
+      return document.querySelector('table');
+    }
 
-  const detailPage = await browser.newPage();
-  detailPage.setDefaultNavigationTimeout(timeoutMs);
+    function extractProductos() {
+      const heading = findHeading('Listado de productos solicitados');
+      const table = findTableNear(heading);
+      const productos = [];
 
-  try {
-    await detailPage.goto(url, { waitUntil: 'networkidle2' });
-    // Espera genérica: el detalle suele renderizar con React también
-    await detailPage.waitForTimeout(1000);
+      if (table) {
+        const headerCells = Array.from(table.querySelectorAll('thead th')).map((th) => norm(th.innerText));
+        const headerMap = new Map();
+        headerCells.forEach((h, idx) => headerMap.set(h.toLowerCase(), idx));
 
-    const items = await detailPage.evaluate(() => {
-      const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-      const results = [];
+        const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+        for (const tr of bodyRows) {
+          const tds = Array.from(tr.querySelectorAll('td')).map((td) => norm(td.innerText));
+          if (!tds.length) continue;
 
-      // 1) Tablas tradicionales
-      const tables = Array.from(document.querySelectorAll('table'));
-      for (const table of tables) {
-        const rows = Array.from(table.querySelectorAll('tr'));
-        for (const tr of rows) {
-          const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => norm(c.innerText));
-          const joined = cells.filter(Boolean).join(' | ');
-          if (!joined) continue;
-          // Filtrar headers típicos
-          if (/descripci[oó]n|cantidad|unidad|precio|total/i.test(joined) && cells.length <= 2) continue;
-          // Heurística: descartar filas muy cortas
-          if (joined.length < 10) continue;
-          results.push({ raw: joined });
+          const getByHeader = (reList) => {
+            for (const [h, idx] of headerMap.entries()) {
+              if (reList.some((re) => re.test(h))) return tds[idx] || '';
+            }
+            return '';
+          };
+
+          const id =
+            getByHeader([/^id$/, /producto id/, /c[oó]digo/]) ||
+            (tds[0] && /^\d+$/.test(tds[0]) ? tds[0] : '');
+
+          const nombre =
+            getByHeader([/nombre/, /producto/]) ||
+            tds.find((t) => t && t.length >= 3) ||
+            '';
+
+          const descripcion =
+            getByHeader([/descripci[oó]n/, /detalle/]) ||
+            '';
+
+          const cantidad =
+            getByHeader([/cantidad/, /cant\./]) ||
+            '';
+
+          const unidad =
+            getByHeader([/unidad/, /u\./]) ||
+            '';
+
+          // Evitar filas vacías/headers
+          const joined = tds.join(' | ');
+          if (!joined || joined.length < 5) continue;
+
+          productos.push({ id, nombre, descripcion, cantidad, unidad });
         }
       }
 
-      // 2) Fallback: listas
-      const lis = Array.from(document.querySelectorAll('li'))
-        .map((li) => norm(li.innerText))
-        .filter((t) => t.length >= 10);
-      for (const t of lis.slice(0, 100)) {
-        results.push({ raw: t });
+      // Fallback si no hay tabla o viene vacía: buscar cards/listas cercanas al heading
+      if (!productos.length) {
+        const heading = findHeading('Listado de productos solicitados');
+        const container = heading?.parentElement || document.body;
+        const candidates = Array.from(container.querySelectorAll('li, div'))
+          .map((el) => norm(el.innerText))
+          .filter((t) => t.length >= 15)
+          .slice(0, 200);
+
+        for (const t of candidates.slice(0, 50)) {
+          // Heurística muy simple
+          productos.push({ id: '', nombre: t.slice(0, 200), descripcion: t.slice(0, 1000), cantidad: '', unidad: '' });
+        }
       }
 
-      // Dedupe por raw
+      // Dedupe por (id|nombre|descripcion)
       const seen = new Set();
-      const deduped = [];
-      for (const r of results) {
-        if (!r.raw || seen.has(r.raw)) continue;
-        seen.add(r.raw);
-        deduped.push(r);
+      const out = [];
+      for (const p of productos) {
+        const key = `${p.id}|${p.nombre}|${p.descripcion}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(p);
       }
-      return deduped.slice(0, 200); // límite de seguridad
-    });
+      return out;
+    }
 
-    return items.map((it, idx) => ({
-      licitacion_codigo: compra.codigo,
-      item_index: idx + 1,
-      descripcion: (it.raw || '').slice(0, 1000),
-      raw: it.raw || ''
-    }));
-  } catch (err) {
-    console.warn(`No pude extraer items del detalle (${compra.codigo}): ${String(err?.message || err)}`);
-    // Fallback: insertar un item mínimo con el título
-    return [
-      {
-        licitacion_codigo: compra.codigo,
-        item_index: 1,
-        descripcion: compra.titulo || '',
-        raw: ''
+    function extractDocumentos() {
+      const heading = findHeading('documentos adjuntos') || findHeading('adjuntos') || null;
+      const container = heading?.parentElement || document.body;
+      const links = Array.from(container.querySelectorAll('a'))
+        .map((a) => ({
+          nombre: norm(a.innerText),
+          url: a.href ? String(a.href) : ''
+        }))
+        .filter((l) => l.url && /^https?:\/\//.test(l.url));
+
+      const filtered = links.filter((l) => {
+        const t = (l.nombre || '').toLowerCase();
+        return (
+          t.includes('doc') ||
+          t.includes('pdf') ||
+          /\.(pdf|doc|docx|xls|xlsx|zip|rar)(\?|$)/i.test(l.url)
+        );
+      });
+
+      // Dedupe por url
+      const seen = new Set();
+      const out = [];
+      for (const d of (filtered.length ? filtered : links)) {
+        if (!d.url || seen.has(d.url)) continue;
+        seen.add(d.url);
+        out.push({ nombre: d.nombre || '', url: d.url });
       }
-    ];
-  } finally {
-    await detailPage.close();
+      return out.slice(0, 50);
+    }
+
+    return {
+      productos: extractProductos(),
+      documentos: extractDocumentos()
+    };
+  });
+
+  return detalle;
+}
+
+async function fetchExistingCodigos(supabase, codigos) {
+  const existing = new Set();
+  const batches = chunkArray(codigos, 200);
+  for (const batch of batches) {
+    const { data, error } = await supabase
+      .from('licitaciones')
+      .select('codigo')
+      .in('codigo', batch);
+    if (error) throw error;
+    for (const row of data || []) existing.add(row.codigo);
   }
+  return existing;
 }
 
 async function main() {
   const args = parseArgs(process.argv);
 
-  const params = {
+  const incrementalMode = resolveIncrementalMode(args);
+  const now = new Date();
+  const incrementalSince = new Date(now.getTime() - 75 * 60 * 1000);
+
+  const baseParams = {
     ...config.params,
     ...(args.from ? { date_from: args.from } : {}),
     ...(args.to ? { date_to: args.to } : {})
   };
+
+  const params = incrementalMode
+    ? {
+        ...baseParams,
+        // La URL acepta YYYY-MM-DD. Para “últimos 75 min” usamos el día correspondiente
+        // y filtramos por hora vía `publicada_el` después de extraer.
+        date_from: formatDateYYYYMMDD(incrementalSince),
+        date_to: formatDateYYYYMMDD(now)
+      }
+    : baseParams;
 
   // En --test permitimos correr sin credenciales y solo loguear (dry-run).
   const supabase = getSupabaseClientOrNull({ allowNull: args.test });
@@ -389,6 +539,7 @@ async function main() {
 
   try {
     let currentPage = startPage;
+    const runDetail = withConcurrencyLimit(3);
 
     while (true) {
       const url = buildUrl(currentPage, params);
@@ -437,8 +588,38 @@ async function main() {
 
       console.log(`Extraídas ${compras.length} compras en la página ${currentPage}`);
 
+      // Incremental: filtrar por timestamp (últimos 75 min)
+      const comprasFiltradas = incrementalMode
+        ? compras.filter((c) => {
+            const d = parseLocalIsoToDate(c.publicada_el);
+            return d && d.getTime() >= incrementalSince.getTime();
+          })
+        : compras;
+
+      if (incrementalMode) {
+        console.log(`Incremental ON: ${comprasFiltradas.length}/${compras.length} compras dentro de últimos 75 min`);
+      }
+
+      // Incremental: evitar reprocesar códigos ya existentes en Supabase
+      let comprasNuevas = comprasFiltradas;
+      if (incrementalMode && !dryRun && comprasFiltradas.length) {
+        const codigos = comprasFiltradas.map((c) => c.codigo);
+        const existentes = await withRetries(
+          async () => await fetchExistingCodigos(supabase, codigos),
+          {
+            retries: config.maxRetries,
+            onRetry: async (err, attempt) => {
+              console.warn(`Reintento verificación existentes (intento ${attempt}/${config.maxRetries}): ${String(err?.message || err)}`);
+              await sleepRandom(800, 1600);
+            }
+          }
+        );
+        comprasNuevas = comprasFiltradas.filter((c) => !existentes.has(c.codigo));
+        console.log(`Incremental: nuevas=${comprasNuevas.length}, ya-existían=${comprasFiltradas.length - comprasNuevas.length}`);
+      }
+
       const nowIso = toIsoNow();
-      const licRows = compras.map((c) => ({
+      const licRows = comprasNuevas.map((c) => ({
         ...c,
         fecha_extraccion: nowIso
       }));
@@ -446,28 +627,85 @@ async function main() {
       if (dryRun) {
         console.log(`[dry-run] Enviaría ${licRows.length} filas a 'licitaciones' (upsert por codigo).`);
       } else {
-        await upsertLicitaciones(supabase, licRows);
-        console.log(`Upsert OK: ${licRows.length} filas en 'licitaciones'.`);
-      }
-
-      // Items por cada compra (desde el detalle si existe link)
-      for (const compra of compras) {
-        const items = await extractItemsFromDetalle(browser, compra, { timeoutMs: config.navigationTimeoutMs });
-        if (!items.length) continue;
-
-        if (dryRun) {
-          console.log(`[dry-run] Enviaría ${items.length} items a 'licitacion_items' para ${compra.codigo}.`);
-        } else {
-          try {
-            await upsertLicitacionItems(supabase, items);
-          } catch (err) {
-            console.warn(`Falló upsert en 'licitacion_items' para ${compra.codigo}: ${String(err?.message || err)}`);
-          }
+        if (licRows.length) {
+          await upsertLicitaciones(supabase, licRows);
+          console.log(`Upsert OK: ${licRows.length} filas en 'licitaciones'.`);
         }
-
-        // Anti-rate-limit entre detalles
-        await sleepRandom(400, 1200);
       }
+
+      // Detalle completo (productos/documentos) en paralelo, con límite de 3 páginas concurrentes
+      const detailTasks = comprasNuevas.map((compra) =>
+        runDetail(async () => {
+          const detailPage = await browser.newPage();
+          await detailPage.setViewport({ width: 1440, height: 900 });
+          detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
+          await detailPage.setUserAgent(
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          );
+
+          try {
+            const detalle = await withRetries(
+              async () => await scrapeCompraDetallada(detailPage, compra.codigo),
+              {
+                retries: config.maxRetries,
+                onRetry: async (err, attempt) => {
+                  console.warn(`Retry detalle (${compra.codigo}) intento ${attempt}/${config.maxRetries}: ${String(err?.message || err)}`);
+                  await sleepRandom(1200, 2400);
+                }
+              }
+            );
+
+            const productos = Array.isArray(detalle.productos) ? detalle.productos : [];
+
+            // Normalización y persistencia de items
+            const sorted = productos.slice().sort((a, b) => {
+              const ai = String(a.id || '');
+              const bi = String(b.id || '');
+              if (ai && bi && ai !== bi) return ai.localeCompare(bi);
+              return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+            });
+
+            const itemRows = (sorted.length ? sorted : [{ id: '', nombre: compra.titulo || '', descripcion: '', cantidad: '', unidad: '' }])
+              .map((p, idx) => ({
+                licitacion_codigo: compra.codigo,
+                item_index: idx + 1,
+                producto_id: p.id || null,
+                nombre: p.nombre || '',
+                descripcion: p.descripcion || '',
+                cantidad: p.cantidad || null,
+                unidad: p.unidad || ''
+              }));
+
+            if (dryRun) {
+              console.log(`[dry-run] ${compra.codigo}: productos=${sorted.length} -> enviaría ${itemRows.length} a 'licitacion_items'.`);
+            } else {
+              await upsertLicitacionItems(supabase, itemRows);
+            }
+
+            // Documentos (opcional): intentamos guardar en tabla extra si existe
+            const documentos = Array.isArray(detalle.documentos) ? detalle.documentos : [];
+            if (!dryRun && documentos.length) {
+              const docRows = documentos.map((d) => ({
+                licitacion_codigo: compra.codigo,
+                nombre: d.nombre || '',
+                url: d.url || ''
+              }));
+              try {
+                const { error } = await supabase
+                  .from('licitacion_documentos')
+                  .upsert(docRows, { onConflict: 'licitacion_codigo,url' });
+                if (error) throw error;
+              } catch (e) {
+                console.warn(`Tabla 'licitacion_documentos' no disponible o falló inserción (${compra.codigo}): ${String(e?.message || e)}`);
+              }
+            }
+          } finally {
+            await detailPage.close();
+          }
+        })
+      );
+
+      await Promise.all(detailTasks);
 
       // Mantener en memoria un resumen (útil para logs/fin de corrida)
       const existing = new Set(allCompras.map((c) => c.codigo));
@@ -483,7 +721,9 @@ async function main() {
     console.error('Error durante el scraping:', err);
   } finally {
     await browser.close();
-    console.log(`Finalizado. Compras únicas vistas (memoria): ${allCompras.length}. Total resultados detectado: ${totalResultados ?? 'N/A'}.`);
+    console.log(
+      `Finalizado. Compras únicas vistas (memoria): ${allCompras.length}. Total resultados detectado: ${totalResultados ?? 'N/A'}. Incremental=${incrementalMode ? 'ON' : 'OFF'}.`
+    );
   }
 }
 

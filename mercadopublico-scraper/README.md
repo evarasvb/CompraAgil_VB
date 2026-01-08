@@ -35,6 +35,7 @@ Copia `.env.example` a `.env` y completa:
 - `SUPABASE_URL`
 - `SUPABASE_KEY`
 - `MAX_PAGES` (opcional, por defecto `1`)
+- `INCREMENTAL_MODE` (opcional, por defecto `false`)
 
 ### Uso
 
@@ -66,8 +67,14 @@ El scraper hace:
 
 Si no se logra obtener `link_detalle`, igualmente inserta un **item mínimo** por compra (para cumplir la relación).
 
+Además, extrae el detalle desde `https://buscador.mercadopublico.cl/ficha?code=...` para obtener:
+
+- **Listado de productos solicitados** → se guarda en `licitacion_items`
+- **Documentos adjuntos** → si existe la tabla `licitacion_documentos`, intenta upsert (por `licitacion_codigo,url`)
+
 ### Notas
 
 - Incluye **reintentos** (navegación y extracción) y **esperas aleatorias** (anti-rate-limit).
+- Soporta **modo incremental**: si `INCREMENTAL_MODE=true`, filtra compras cuya `publicada_el` esté dentro de los últimos ~75 minutos y evita reprocesar códigos ya existentes (consulta a Supabase).
 - Fase 2 (futuro): login + extracción de datos adicionales + documentos.
 
