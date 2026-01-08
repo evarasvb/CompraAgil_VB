@@ -1,0 +1,17 @@
+{
+  "name": "mercadopublico-agile-scraper",
+  "version": "1.0.0",
+  "description": "Scraper para extraer Compras Ágiles de MercadoPublico.cl",
+  "main": "scraper.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node scraper.js",
+    "test": "node scraper.js --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}
