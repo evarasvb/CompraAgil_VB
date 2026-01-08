@@ -11,10 +11,17 @@ module.exports = {
    * Si `maxPages` es null, se intentará calcular con el total de resultados / 15.
    * Puedes fijarlo manualmente (ej. 314) si el sitio no entrega el total de forma confiable.
    */
-  maxPages: null,
+  maxPages: (() => {
+    // Por defecto 1 para testing (override con env MAX_PAGES)
+    const raw = process.env.MAX_PAGES;
+    if (raw == null || String(raw).trim() === '') return 1;
+    if (String(raw).trim().toLowerCase() === 'auto') return null;
+    const n = Number.parseInt(String(raw), 10);
+    return Number.isFinite(n) ? n : 1;
+  })(),
   maxRetries: 3,
   navigationTimeoutMs: 60000,
-  resultsTimeoutMs: 45000,
+  resultsTimeoutMs: 90000,
   delayBetweenPagesMs: {
     min: 2000,
     max: 5000

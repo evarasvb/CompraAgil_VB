@@ -12,6 +12,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "dotenv": "^17.2.3",
     "puppeteer": "^21.0.0"
   }
 }

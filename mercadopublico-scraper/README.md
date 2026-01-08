@@ -1,6 +1,7 @@
 ## Scraper de Compras Ágiles (MercadoPublico)
 
 Scraper (fase 1, **sin login**) para extraer compras desde `buscador.mercadopublico.cl/compra-agil` usando un navegador headless (Puppeteer).
+En vez de generar un JSON, **envía los datos a Supabase**.
 
 ### Qué extrae
 
@@ -27,6 +28,14 @@ cd /workspace/mercadopublico-scraper
 npm install
 ```
 
+### Configuración (Supabase)
+
+Copia `.env.example` a `.env` y completa:
+
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- `MAX_PAGES` (opcional, por defecto `1`)
+
 ### Uso
 
 Ejecutar (por defecto usa headless):
@@ -46,42 +55,19 @@ Opciones útiles:
 ```bash
 node scraper.js --from 2025-12-09 --to 2026-01-08 --pages 5
 node scraper.js --headed
-node scraper.js --out ./output/compras_agiles.json
-node scraper.js --no-resume
 ```
 
-### Output
+### Tablas esperadas
 
-- `output/compras_agiles.json`: salida final
-- `output/progress_compras.json`: progreso (se guarda cada N páginas)
+El scraper hace:
 
-Formato:
+- Upsert en tabla **`licitaciones`** (por `codigo`)
+- Upsert en tabla **`licitacion_items`** (por `licitacion_codigo,item_index`)
 
-```json
-{
-  "fecha_extraccion": "2026-01-08T16:00:00.000Z",
-  "total_compras": 4708,
-  "total_resultados": 4708,
-  "params": { "...": "..." },
-  "compras": [
-    {
-      "codigo": "1161266-3-COT26",
-      "titulo": "ADQUISICIÓN DE AGENDAD 2026 Y TACO CALENDARIO",
-      "estado": "Publicada recibiendo cotizaciones",
-      "publicada_el": "2026-01-08T13:24:00",
-      "finaliza_el": "2026-01-12T08:00:00",
-      "presupuesto_estimado": 300000,
-      "organismo": "I MUNICIPALIDAD DE TUCAPEL",
-      "departamento": "Adquisiciones Contratos y Licitaciones",
-      "link_detalle": "https://...",
-      "estado_detallado": "Recibiendo cotizaciones"
-    }
-  ]
-}
-```
+Si no se logra obtener `link_detalle`, igualmente inserta un **item mínimo** por compra (para cumplir la relación).
 
 ### Notas
 
-- Incluye **reintentos** (navegación y extracción), **esperas aleatorias** entre páginas (anti-rate-limit), y **guardado de progreso**.
+- Incluye **reintentos** (navegación y extracción) y **esperas aleatorias** (anti-rate-limit).
 - Fase 2 (futuro): login + extracción de datos adicionales + documentos.
 
