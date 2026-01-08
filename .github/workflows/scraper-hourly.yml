@@ -1,0 +1,42 @@
+name: Scraper Compras Ágiles (Cada Hora)
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Cada hora en punto
+  workflow_dispatch:  # Permitir ejecución manual
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: cursor/mercadopublico-agile-scraper-4a12
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd mercadopublico-scraper
+          npm ci
+      
+      - name: Run scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          INCREMENTAL_MODE: true
+          MAX_PAGES: 5
+        run: |
+          cd mercadopublico-scraper
+          npm start
+      
+      - name: Notify on failure
+        if: failure()
+        run: echo "Scraper failed! Check logs for details."
