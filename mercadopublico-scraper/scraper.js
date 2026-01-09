@@ -1,6 +1,20 @@
 require('dotenv').config();
 
-const puppeteer = require('puppeteer');
+// Timestamp en todos los logs (útil para CI/GitHub Actions)
+(() => {
+  const ts = () => new Date().toISOString();
+  const origLog = console.log.bind(console);
+  const origWarn = console.warn.bind(console);
+  const origError = console.error.bind(console);
+  console.log = (...args) => origLog(`[${ts()}]`, ...args);
+  console.warn = (...args) => origWarn(`[${ts()}]`, ...args);
+  console.error = (...args) => origError(`[${ts()}]`, ...args);
+})();
+
+// Anti-bot: puppeteer-extra + stealth
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const { createClient } = require('@supabase/supabase-js');
 
 const config = require('./config');
@@ -289,11 +303,15 @@ async function debugDumpPage(page) {
   try {
     const title = await page.title();
     const url = page.url();
-    const snippet = await page.evaluate(() => {
+    const snippetText = await page.evaluate(() => {
       const t = (document.body && (document.body.innerText || document.body.textContent)) || '';
       return String(t).replace(/\s+/g, ' ').trim().slice(0, 800);
     });
-    console.log(`DEBUG title="${title}" url="${url}" snippet="${snippet}"`);
+    const snippetHtml = await page.evaluate(() => {
+      const html = document.documentElement ? document.documentElement.outerHTML : '';
+      return String(html).replace(/\s+/g, ' ').trim().slice(0, 1200);
+    });
+    console.log(`DEBUG title="${title}" url="${url}" text_snippet="${snippetText}" html_snippet="${snippetHtml}"`);
   } catch (e) {
     console.warn(`DEBUG dump falló: ${String(e?.message || e)}`);
   }
@@ -545,18 +563,20 @@ async function main() {
 
     while (true) {
       const url = buildUrl(currentPage, params);
-      console.log(`[${new Date().toISOString()}] Página ${currentPage}${maxPages ? `/${maxPages}` : ''}: ${url}`);
+      console.log(`Página ${currentPage}${maxPages ? `/${maxPages}` : ''}: ${url}`);
 
       await withRetries(
         async () => {
           await page.goto(url, { waitUntil: 'networkidle2' });
+          console.log('Esperando resultados (waitForResults)...');
           await waitForResults(page);
+          console.log('Resultados detectados (waitForResults OK).');
         },
         {
           retries: config.maxRetries,
           onRetry: async (err, attempt) => {
             console.warn(`Reintento navegación/espera (intento ${attempt}/${config.maxRetries}): ${String(err?.message || err)}`);
-            if (args.test) await debugDumpPage(page);
+            await debugDumpPage(page);
             await sleepRandom(1500, 3000);
           }
         }

@@ -29,8 +29,8 @@ module.exports = {
     return Number.isFinite(n) ? n : 1;
   })(),
   maxRetries: 3,
-  navigationTimeoutMs: 180000,
-  resultsTimeoutMs: 150000,
+  navigationTimeoutMs: 60000,
+  resultsTimeoutMs: 45000,
   delayBetweenPagesMs: {
     min: 2000,
     max: 5000
