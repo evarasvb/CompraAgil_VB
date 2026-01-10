@@ -20,8 +20,7 @@ module.exports = {
    * Si `maxPages` es null, se intentará calcular con el total de resultados / 15.
    * Puedes fijarlo manualmente (ej. 314) si el sitio no entrega el total de forma confiable.
    */
-  maxPages: (() => {
-    // Por defecto 1 para testing (override con env MAX_PAGES)
+    maxPages: () => 999, // Procesar TODAS las páginas (999 = ilimitado práctico)    // Por defecto 1 para testing (override con env MAX_PAGES)
     const raw = process.env.MAX_PAGES;
     if (raw == null || String(raw).trim() === '') return 1;
     if (String(raw).trim().toLowerCase() === 'auto') return null;
@@ -35,8 +34,7 @@ module.exports = {
     min: 2000,
     max: 5000
   },
-  saveEveryPages: 10,
-  outputDir: './output',
+    saveEveryPages: 50, // Guardar cada 50 páginas procesadas  outputDir: './output',
   outputPath: './output/compras_agiles.json',
   progressPath: './output/progress_compras.json',
   /**
