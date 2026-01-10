@@ -125,7 +125,8 @@ async function waitForResults(page) {
     const hasTotal = /Existen\s+[\d\.\,]+\s+resultados\s+para\s+tu\s+búsqueda/i.test(bodyText);
 
     const candidates = Array.from(document.querySelectorAll('button, a'));
-    const hasDetalle = candidates.some((el) => (el.textContent || '').toLowerCase().includes('revisar detalle'));
+    // Texto actualizado del sitio: "Revisar detalle"
+    const hasDetalle = candidates.some((el) => /revisar detalle/i.test(el.textContent || ''));
 
     return hasDetalle || hasCodigo || hasTotal;
   }, { timeout: config.resultsTimeoutMs });
@@ -134,7 +135,8 @@ async function waitForResults(page) {
 async function extractTotalResultados(page) {
   // Buscar el texto tipo: "Existen X resultados para tu búsqueda"
   const text = await page.evaluate(() => document.body?.innerText || '');
-  const m = text.match(/Existen\s+([\d\.\,]+)\s+resultados\s+para\s+tu\s+búsqueda/i);
+  // DOM actual: "Existen 4.415 resultados" (a veces también incluye "para tu búsqueda")
+  const m = text.match(/Existen\s+([\d\.\,]+)\s+resultados(?:\s+para\s+tu\s+búsqueda)?/i);
   if (!m) return null;
   const n = Number.parseInt(m[1].replace(/[^0-9]/g, ''), 10);
   return Number.isFinite(n) ? n : null;
@@ -149,16 +151,13 @@ async function extractComprasFromPage(page) {
         .map((l) => l.trim())
         .filter(Boolean);
 
-    const triggers = Array.from(document.querySelectorAll('button, a'))
-      .filter((el) => normalize(el.textContent).toLowerCase().includes('revisar detalle'));
-
     const seen = new Set();
     const results = [];
 
-    function findCardContainer(trigger) {
+    function findCardContainer(nodeStart) {
       // Subir niveles y elegir el primer ancestro que contenga un código de compra
       const codeRe = /\d{6,7}-\d+-[A-Z]{2,6}\d+/;
-      let node = trigger;
+      let node = nodeStart;
       for (let i = 0; i < 10 && node; i++) {
         if (node instanceof HTMLElement) {
           const txt = node.innerText || '';
@@ -166,69 +165,95 @@ async function extractComprasFromPage(page) {
         }
         node = node.parentElement;
       }
-      return trigger.parentElement || trigger;
+      return (nodeStart && nodeStart.parentElement) || nodeStart;
     }
 
-    function extractLink(trigger) {
-      // Preferir href si es <a>
-      if (trigger.tagName.toLowerCase() === 'a') {
-        const href = trigger.getAttribute('href');
-        return href ? href : null;
-      }
-      const a = trigger.closest('a');
-      if (a) {
-        const href = a.getAttribute('href');
-        return href ? href : null;
-      }
-      // Fallback: onclick (si existe)
-      const onclick = trigger.getAttribute('onclick');
-      return onclick ? onclick : null;
+    function extractLinkFromCard(card) {
+      // Preferir el CTA "Revisar detalle" dentro del card
+      const ctas = Array.from(card.querySelectorAll('button, a')).filter((el) => /revisar detalle/i.test(el.textContent || ''));
+      const el = ctas[0] || null;
+
+      const extractFromEl = (node) => {
+        if (!node) return null;
+        if (node.tagName && node.tagName.toLowerCase() === 'a') {
+          const href = node.getAttribute('href');
+          return href ? href : null;
+        }
+        const a = node.closest ? node.closest('a') : null;
+        if (a) {
+          const href = a.getAttribute('href');
+          return href ? href : null;
+        }
+        const onclick = node.getAttribute ? node.getAttribute('onclick') : null;
+        return onclick ? onclick : null;
+      };
+
+      // Si el CTA no es <a>, intentar con su closest('a') o onclick; si no existe, caer al primer link del card
+      const viaCta = extractFromEl(el);
+      if (viaCta) return viaCta;
+
+      const anyLink = card.querySelector('a[href]');
+      if (anyLink) return anyLink.getAttribute('href') || null;
+      return null;
     }
 
-    for (const trigger of triggers) {
-      const card = findCardContainer(trigger);
-      const lines = getLines(card);
+    const codeRe = /\d{6,7}-\d+-[A-Z]{2,6}\d+/;
+    const dateRe = /\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g;
+
+    // Nuevo DOM: títulos en elementos con role="heading" dentro del card
+    const headings = Array.from(document.querySelectorAll('[role="heading"]'));
+    for (const heading of headings) {
+      const card = findCardContainer(heading);
+      if (!card) continue;
+
       const blob = normalize(card?.innerText || '');
+      const lines = getLines(card);
 
-      const codeRe = /\d{6,7}-\d+-[A-Z]{2,6}\d+/;
-      const codigo = (blob.match(codeRe) || [null])[0];
+      // Código: suele estar en un elemento role="generic" antes del heading
+      let codigo = null;
+      const generics = Array.from(card.querySelectorAll('[role="generic"]'));
+      const headingIdx = generics.findIndex((g) => g.contains(heading) || g === heading);
+      if (headingIdx > 0) {
+        for (let i = headingIdx - 1; i >= 0; i--) {
+          const t = normalize(generics[i].innerText || generics[i].textContent || '');
+          const m = t.match(codeRe);
+          if (m) {
+            codigo = m[0];
+            break;
+          }
+        }
+      }
+      if (!codigo) {
+        codigo = (blob.match(codeRe) || [null])[0];
+      }
       if (!codigo) continue;
       if (seen.has(codigo)) continue;
       seen.add(codigo);
 
-      const dateRe = /\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g;
+      // Estado verde: "Publicada recibiendo cotizaciones" en el primer generic
+      const estado =
+        normalize(generics[0]?.innerText || generics[0]?.textContent || '') ||
+        (lines.find((l) => /Publicada/i.test(l)) || '');
+
+      // Título: contenido del heading (preferido)
+      const titulo = normalize(heading.innerText || heading.textContent || '');
+
       const fechas = blob.match(dateRe) || [];
-
-      // Estado (badge verde): suele contener "Publicada"
-      const estado = lines.find((l) => /Publicada/i.test(l)) || '';
-
-      // Título: heurística: primera línea "larga" que no sea código/fechas/presupuesto/labels
-      const presupuestoLine = lines.find((l) => /\$\s*\d/.test(l)) || '';
-      const titleCandidate = lines.find((l) => {
-        if (!l) return false;
-        if (l === codigo) return false;
-        if (dateRe.test(l)) return false;
-        if (/\$\s*\d/.test(l)) return false;
-        if (/Publicada/i.test(l)) return false;
-        if (/Publicada el|Finaliza el|Presupuesto|Organismo/i.test(l)) return false;
-        return l.length >= 8;
-      }) || '';
-
-      // Publicada/Finaliza: si hay 2 fechas, asumir [0]=publicada, [1]=finaliza
       const publicada_el = fechas[0] || '';
       const finaliza_el = fechas[1] || '';
 
-      // Organismo + departamento: línea con " - " (la más parecida)
+      const presupuestoLine = lines.find((l) => /\$\s*\d/.test(l)) || '';
+
       const orgLine =
         lines.find((l) => l.includes(' - ') && l.length > 15) ||
         lines.find((l) => /MUNICIPALIDAD|MINISTERIO|SERVICIO|GOBIERNO|HOSPITAL|UNIVERSIDAD/i.test(l)) ||
         '';
 
-      const link_detalle = extractLink(trigger);
+      const link_detalle = extractLinkFromCard(card);
 
       results.push({
         codigo,
-        titulo: titleCandidate,
+        titulo: titulo || '',
         estado,
         publicada_el,
         finaliza_el,
