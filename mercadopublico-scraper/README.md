@@ -130,13 +130,17 @@ Uso: cabecera de cada compra/licitación.
   - `titulo` (text)
   - `estado` (text)
   - `estado_detallado` (text)
-  - `publicada_el` (text o timestamp) *(el scraper genera `YYYY-MM-DDTHH:mm:00` como string local)*
-  - `finaliza_el` (text o timestamp)
+  - `fecha_publicacion` (timestamptz o text) *(el scraper genera `YYYY-MM-DDTHH:mm:00` como string local)*
+  - `fecha_cierre_primer_llamado` (timestamptz o text)
+  - `fecha_cierre_segundo_llamado` (timestamptz o text, nullable)
   - `presupuesto_estimado` (int)
   - `organismo` (text)
   - `departamento` (text)
   - `link_detalle` (text)
   - `fecha_extraccion` (timestamptz/text)
+
+> Nota: versiones antiguas del README usaban `publicada_el/finaliza_el`; el código actual escribe en
+> `fecha_publicacion/fecha_cierre_primer_llamado` para alinearse con `supabase/schema.sql`.
 
 #### Tabla `licitacion_items`
 Uso: productos del “Listado de productos solicitados”.
