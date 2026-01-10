@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const puppeteer = require('puppeteer');
 const { createClient } = require('@supabase/supabase-js');
+const { matchLicitacion } = require('./matcher_firmavb');
 
 const config = require('./config');
 const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, toIsoNow } = require('./utils');
@@ -663,9 +664,24 @@ async function main() {
       const nowIso = toIsoNow();
       const licRows = comprasNuevas.map((c) => ({
         ...c,
-        fecha_extraccion: nowIso
-      }));
 
+              // Agregar matching FirmaVB
+      const matchResult = matchLicitacion({
+        titulo: c.titulo || '',
+       items: [] // Los items se procesan después
+      });
+      
+      return {
+                ...c,
+                categoria: matchResult.categoria,
+                categoria_match: matchResult.categoria_match,
+                match_score: matchResult.match_score,
+                palabras_encontradas: matchResult.palabras_encontradas ? JSON.stringify(matchResult.palabras_encontradas) : null,
+                match_encontrado: matchResult.categoria ? true : false,
+                fecha_extraccion: nowIso
+                        };
+          }));
+      }));
       if (dryRun) {
         console.log(`[dry-run] Enviaría ${licRows.length} filas a 'licitaciones' (upsert por codigo).`);
       } else {
