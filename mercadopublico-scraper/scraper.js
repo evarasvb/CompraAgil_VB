@@ -123,11 +123,17 @@ async function waitForResults(page) {
     const bodyText = (document.body && (document.body.innerText || document.body.textContent)) || '';
     const hasCodigo = /\d{6,7}-\d+-[A-Z]{2,6}\d+/.test(bodyText);
     const hasTotal = /Existen\s+[\d\.\,]+\s+resultados\s+para\s+tu\s+búsqueda/i.test(bodyText);
+    const hasNoResults =
+      /No\s+existen\s+resultados\s+para\s+tu\s+b[uú]squeda/i.test(bodyText) ||
+      /No\s+se\s+encontraron\s+resultados/i.test(bodyText) ||
+      /\bSin\s+resultados\b/i.test(bodyText);
 
     const candidates = Array.from(document.querySelectorAll('button, a'));
     const hasDetalle = candidates.some((el) => (el.textContent || '').toLowerCase().includes('revisar detalle'));
 
-    return hasDetalle || hasCodigo || hasTotal;
+    // Si el sitio dice explícitamente que no hay resultados, igual consideramos "listo"
+    // para evitar timeouts (y así el scraper continúa con 0 compras).
+    return hasDetalle || hasCodigo || hasTotal || hasNoResults;
   }, { timeout: config.resultsTimeoutMs });
 }
 
@@ -135,7 +141,17 @@ async function extractTotalResultados(page) {
   // Buscar el texto tipo: "Existen X resultados para tu búsqueda"
   const text = await page.evaluate(() => document.body?.innerText || '');
   const m = text.match(/Existen\s+([\d\.\,]+)\s+resultados\s+para\s+tu\s+búsqueda/i);
-  if (!m) return null;
+  if (!m) {
+    // Mensajes típicos cuando el listado está cargado pero no hay resultados.
+    if (
+      /No\s+existen\s+resultados\s+para\s+tu\s+b[uú]squeda/i.test(text) ||
+      /No\s+se\s+encontraron\s+resultados/i.test(text) ||
+      /\bSin\s+resultados\b/i.test(text)
+    ) {
+      return 0;
+    }
+    return null;
+  }
   const n = Number.parseInt(m[1].replace(/[^0-9]/g, ''), 10);
   return Number.isFinite(n) ? n : null;
 }
@@ -260,8 +276,11 @@ async function extractComprasFromPage(page) {
       codigo: it.codigo,
       titulo: it.titulo || '',
       estado: estado || '',
-      publicada_el: parseDateCL(it.publicada_el),
-      finaliza_el: parseDateCL(it.finaliza_el),
+      // Nombres alineados con `supabase/schema.sql`
+      fecha_publicacion: parseDateCL(it.publicada_el),
+      fecha_cierre_primer_llamado: parseDateCL(it.finaliza_el),
+      // La vista del listado normalmente expone solo un cierre; dejamos el segundo null.
+      fecha_cierre_segundo_llamado: null,
       presupuesto_estimado: parseBudgetCLP(it.presupuesto_estimado) ?? 0,
       organismo: organismo || '',
       departamento: departamento || '',
@@ -608,7 +627,7 @@ async function main() {
       // Incremental: filtrar por timestamp (últimos 75 min)
       const comprasFiltradas = incrementalMode
         ? compras.filter((c) => {
-            const d = parseLocalIsoToDate(c.publicada_el);
+            const d = parseLocalIsoToDate(c.fecha_publicacion);
             return d && d.getTime() >= incrementalSince.getTime();
           })
         : compras;
