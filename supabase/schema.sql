@@ -443,6 +443,11 @@ ALTER TABLE IF EXISTS cliente_ofertas
 ALTER TABLE IF EXISTS cliente_ofertas
   ADD COLUMN IF NOT EXISTS respuesta_mp JSONB;
 
+-- Payload que la extensión Chrome usará para autocompletar/postular en MercadoPúblico.
+-- (No contiene credenciales; solo datos de la oferta).
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS payload_postulacion JSONB;
+
 -- =====================================================
 -- ÍNDICES CLIENTE
 -- =====================================================
