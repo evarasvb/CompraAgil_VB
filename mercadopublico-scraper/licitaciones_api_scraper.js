@@ -7,7 +7,8 @@ const {
   fetchJsonResilient,
   createStealthBrowser,
   fetchJsonViaPuppeteer,
-  isRetryableForFallback
+  isRetryableForFallback,
+  getBlockMetricsSnapshot
 } = require('./anti_block');
 
 function env(name, fallback = '') {
@@ -87,6 +88,10 @@ async function upsertPendingExtensionSync(supabase, row) {
         url: row.url || null,
         reason: row.reason || null,
         context: row.context || null,
+        status: 'pending',
+        completed_at: null,
+        last_error: null,
+        payload: null,
         attempts,
         last_attempt_at: now
       })
@@ -99,6 +104,7 @@ async function upsertPendingExtensionSync(supabase, row) {
       url: row.url || null,
       reason: row.reason || null,
       context: row.context || null,
+      status: 'pending',
       attempts: 1,
       first_seen_at: now,
       last_attempt_at: now
@@ -107,15 +113,56 @@ async function upsertPendingExtensionSync(supabase, row) {
   }
 }
 
+async function logScraperHealth(supabase, { tipo_scraper, status, duracion_ms, items_obtenidos, errores, meta } = {}) {
+  if (!supabase) return;
+  const row = {
+    tipo_scraper: String(tipo_scraper || 'lic_api'),
+    status: String(status || 'ok'),
+    duracion_ms: duracion_ms != null ? Number(duracion_ms) : null,
+    items_obtenidos: items_obtenidos != null ? Number(items_obtenidos) : null,
+    errores: errores ? String(errores).slice(0, 2000) : null,
+    meta: meta || null
+  };
+  const ins = await supabase.from('scraper_health_log').insert(row);
+  if (ins.error) console.warn(`[lic-api] warning: no pude insertar scraper_health_log: ${ins.error.message}`);
+
+  // Alerta si hay 5 fallos consecutivos
+  if (row.status === 'fail') {
+    const last = await supabase
+      .from('scraper_health_log')
+      .select('status,created_at')
+      .eq('tipo_scraper', row.tipo_scraper)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (!last.error) {
+      const statuses = (last.data || []).map((r) => r.status);
+      const allFail = statuses.length === 5 && statuses.every((s) => s === 'fail');
+      if (allFail) {
+        await supabase.from('scraper_health_log').insert({
+          tipo_scraper: row.tipo_scraper,
+          status: 'alert',
+          errores: '5 fallos consecutivos detectados',
+          meta: { window: 'last_5', statuses }
+        });
+        console.warn(`[ALERTA] 5 fallos consecutivos en ${row.tipo_scraper}`);
+      }
+    }
+  }
+}
+
 async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pendingIdentifier } = {}) {
   let browser = fetchJsonWithFallback._browser || null;
 
   try {
-    return await fetchJsonResilient(url, { context });
+    // Importante: modo "rápido" para fallback (no quemar 5*min antes de ir a Puppeteer)
+    return await fetchJsonResilient(url, { context, maxAttempts: 1 });
   } catch (e) {
     if (!isRetryableForFallback(e)) throw e;
 
-    console.warn(`[lic-api] fallback a Puppeteer por error API: ${String(e?.message || e)}`);
+    const status = e?.meta?.status;
+    console.warn(
+      `[FALLBACK] API falló${status ? ` con ${status}` : ''}, cambiando a Puppeteer... (${String(e?.message || e)})`
+    );
     try {
       if (!browser) {
         browser = await createStealthBrowser({ headless: true });
@@ -123,7 +170,7 @@ async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pend
       }
       return await fetchJsonViaPuppeteer(browser, url, { context });
     } catch (e2) {
-      console.warn(`[lic-api] fallback a extensión (API+Puppeteer fallaron): ${String(e2?.message || e2)}`);
+      console.warn(`[FALLBACK] API+Puppeteer fallaron, enviando a pending_extension_sync... (${String(e2?.message || e2)})`);
       if (supabase && pendingKind && pendingIdentifier) {
         await upsertPendingExtensionSync(supabase, {
           kind: pendingKind,
@@ -238,6 +285,10 @@ async function main() {
   const ticket = env('MP_API_TICKET').trim();
   if (!ticket) throw new Error('Falta MP_API_TICKET');
 
+  const runStartedAt = Date.now();
+  let status = 'ok';
+  let errores = null;
+  let itemsObtenidos = 0;
   try {
     const from = env('MP_LIC_FROM').trim() || todayYYYYMMDD();
     const to = env('MP_LIC_TO').trim() || from;
@@ -274,30 +325,62 @@ async function main() {
 
     console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
 
-    // Cache inteligente: si ya existe y fue scrapeado hace <1h, saltar detalle.
-    const freshnessMs = 60 * 60 * 1000;
+    // Cache inteligente: si ya existe y fue scrapeado hace <30min, saltar detalle.
+    // No re-scrapear licitaciones cerradas.
+    // Si está viejo, marcar como "stale" y NO re-scrapear inmediatamente (ver schema).
+    const freshnessMs = 30 * 60 * 1000;
     const cutoffMs = Date.now() - freshnessMs;
     const codigosArr = Array.from(codigos);
     const fresh = new Set();
+    const closed = new Set();
+    const staleCandidates = [];
     for (let i = 0; i < codigosArr.length; i += 200) {
       const batch = codigosArr.slice(i, i + 200);
       const { data, error } = await supabase
         .from('licitaciones_api')
-        .select('codigo,last_scraped_at')
+        .select('codigo,last_scraped_at,fecha_cierre,stale,stale_marked_at')
         .in('codigo', batch);
       if (error) {
         console.warn(`[lic-api] warning: no pude consultar cache (licitaciones_api): ${error.message}`);
         break;
       }
       for (const row of data || []) {
+        const cierreMs = row?.fecha_cierre ? new Date(row.fecha_cierre).getTime() : NaN;
+        if (Number.isFinite(cierreMs) && cierreMs < Date.now()) {
+          closed.add(row.codigo);
+          continue;
+        }
         const t = row?.last_scraped_at ? new Date(row.last_scraped_at).getTime() : NaN;
-        if (Number.isFinite(t) && t >= cutoffMs) fresh.add(row.codigo);
+        if (Number.isFinite(t) && t >= cutoffMs) {
+          fresh.add(row.codigo);
+          continue;
+        }
+        if (row?.codigo) staleCandidates.push(row);
       }
     }
 
     const rows = [];
     for (const codigo of codigos) {
       if (fresh.has(codigo)) continue;
+      if (closed.has(codigo)) continue;
+
+      const staleRow = staleCandidates.find((r) => r.codigo === codigo);
+      if (staleRow) {
+        const staleMarkedAt = staleRow?.stale_marked_at ? new Date(staleRow.stale_marked_at).getTime() : NaN;
+        const rescrapeAfterMs = Number(env('STALE_RESCRAPE_AFTER_MIN', '60')) * 60 * 1000;
+        const isStale = Boolean(staleRow?.stale);
+        const canRescrape = isStale && Number.isFinite(staleMarkedAt) && Date.now() - staleMarkedAt >= rescrapeAfterMs;
+        if (!canRescrape) {
+          if (!isStale) {
+            const upd = await supabase
+              .from('licitaciones_api')
+              .update({ stale: true, stale_marked_at: new Date().toISOString() })
+              .eq('codigo', codigo);
+            if (upd.error) console.warn(`[lic-api] warning: no pude marcar stale ${codigo}: ${upd.error.message}`);
+          }
+          continue;
+        }
+      }
       try {
         const url = buildDetailUrl({ codigo, ticket });
         const payload = await fetchJsonWithFallback(url, {
@@ -322,7 +405,22 @@ async function main() {
     }
 
     console.log(`[lic-api] upsert filas=${rows.length}`);
+    console.log(`[lic-api] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
+    itemsObtenidos = rows.length;
+  } catch (e) {
+    status = 'fail';
+    errores = String(e?.message || e);
+    throw e;
   } finally {
+    const duracionMs = Date.now() - runStartedAt;
+    await logScraperHealth(supabase, {
+      tipo_scraper: 'lic_api',
+      status,
+      duracion_ms: duracionMs,
+      items_obtenidos: itemsObtenidos,
+      errores,
+      meta: { anti_block: getBlockMetricsSnapshot() }
+    });
     await closeFallbackBrowser();
   }
 }

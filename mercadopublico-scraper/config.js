@@ -64,6 +64,25 @@ function getRandomUserAgent() {
 }
 
 /**
+ * Proxies (opcional):
+ * - PROXY_URLS="http://user:pass@host:port,http://host2:port"
+ * - Si no se configura, se usa conexión directa.
+ */
+function getProxyPool() {
+  const raw = process.env.PROXY_URLS;
+  if (!raw) return [];
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function getRandomProxy() {
+  const pool = getProxyPool();
+  return pickRandom(pool);
+}
+
+/**
  * Parámetros de resiliencia/anti-bloqueo (delays con jitter).
  * - entre requests (API/detalle): 2–5s
  * - entre “páginas” (listado por fecha): 5–15s
@@ -77,7 +96,19 @@ const antiBlock = {
   blockPauseMs: 5 * 60 * 1000,
   maxAttempts: 5,
   apiTimeoutMs: 30 * 1000,
-  puppeteerTimeoutMs: 60 * 1000
+  puppeteerTimeoutMs: 60 * 1000,
+  // Detección rate-limit: N veces 429 seguidas => abrir circuito.
+  rateLimit429: { threshold: 3 },
+  // Circuit breaker: si hay >=threshold bloqueos en windowMs => openMs.
+  // mode:
+  // - "sleep": duerme el proceso hasta que cierre el circuito (útil en daemon)
+  // - "failfast": aborta rápido (útil en GitHub Actions)
+  circuitBreaker: {
+    threshold: 3,
+    windowMs: 5 * 60 * 1000,
+    openMs: 30 * 60 * 1000,
+    mode: process.env.GITHUB_ACTIONS ? 'failfast' : 'sleep'
+  }
 };
 
 module.exports = {
@@ -115,5 +146,6 @@ module.exports = {
   // Anti-bloqueo: UA rotatorios + tiempos
   USER_AGENTS,
   getRandomUserAgent,
+  getRandomProxy,
   antiBlock
 };

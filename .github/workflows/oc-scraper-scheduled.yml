@@ -2,7 +2,7 @@ name: Scraper Órdenes de Compra (API MercadoPúblico)
 
 on:
   schedule:
-    - cron: "20 * * * *" # cada hora, minuto 20 (UTC)
+    - cron: "20 */4 * * *" # cada 4 horas, minuto 20 (UTC)
   workflow_dispatch:
     inputs:
       from:
@@ -74,5 +74,22 @@ jobs:
       - name: Ejecutar scraper OC
         if: steps.validate.outputs.skip != 'true'
         working-directory: mercadopublico-scraper
-        run: node oc_scraper.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Retry con backoff exponencial (workflow-level)
+          max=3
+          for i in $(seq 1 $max); do
+            echo "Intento $i/$max: node oc_scraper.js"
+            if node oc_scraper.js; then
+              exit 0
+            fi
+            if [[ "$i" -lt "$max" ]]; then
+              sleep_s=$((30 * (2 ** (i-1))))
+              echo "Fallo intento $i. Esperando ${sleep_s}s..."
+              sleep "$sleep_s"
+            fi
+          done
+          echo "::error::Scraper OC falló $max veces seguidas."
+          exit 1
 

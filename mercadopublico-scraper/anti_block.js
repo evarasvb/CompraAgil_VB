@@ -5,6 +5,28 @@ const { sleep, sleepRandomWithJitter, applyJitter } = require('./utils');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
+// -----------------------------
+// Estado global (por proceso)
+// -----------------------------
+const blockState = {
+  // timestamps (ms) de bloqueos recientes (API + Puppeteer)
+  recentBlockTs: [],
+  // consecutive 429 detectados (para rate limiting)
+  consecutive429: 0,
+  // métricas acumuladas (se imprimen como JSON lines)
+  metrics: {
+    blocksTotal: 0,
+    blocksByReason: {},
+    blocksByKind: {},
+    // YYYY-MM-DDTHH => count
+    blocksByHour: {},
+    // YYYY-MM-DD => count
+    blocksByDay: {}
+  },
+  // circuito abierto hasta este timestamp (ms)
+  circuitOpenUntilMs: 0
+};
+
 let stealthEnabled = false;
 function ensureStealth() {
   if (stealthEnabled) return;
@@ -24,6 +46,14 @@ class TimeoutError extends Error {
   constructor(message, meta = {}) {
     super(message);
     this.name = 'TimeoutError';
+    this.meta = meta;
+  }
+}
+
+class CircuitBreakerOpenError extends Error {
+  constructor(message, meta = {}) {
+    super(message);
+    this.name = 'CircuitBreakerOpenError';
     this.meta = meta;
   }
 }
@@ -86,6 +116,7 @@ function isRetryableForFallback(err) {
   const status = err?.meta?.status;
   if (err?.name === 'TimeoutError') return true;
   if (err?.name === 'BlockDetectedError') return true;
+  if (err?.name === 'CircuitBreakerOpenError') return true;
   if ([403, 429, 504].includes(status)) return true;
   if (msg.includes('timeout') || msg.includes('timed out')) return true;
   return false;
@@ -103,6 +134,70 @@ function logBlockEvent(event) {
   } catch (_) {
     console.warn('[anti-block] bloqueo detectado (no pude serializar evento)');
   }
+}
+
+function bumpBlockMetrics({ kind, reason } = {}) {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const hour = now.toISOString().slice(0, 13); // YYYY-MM-DDTHH
+
+  blockState.metrics.blocksTotal += 1;
+  const r = String(reason || 'unknown');
+  const k = String(kind || 'unknown');
+  blockState.metrics.blocksByReason[r] = (blockState.metrics.blocksByReason[r] || 0) + 1;
+  blockState.metrics.blocksByKind[k] = (blockState.metrics.blocksByKind[k] || 0) + 1;
+  blockState.metrics.blocksByHour[hour] = (blockState.metrics.blocksByHour[hour] || 0) + 1;
+  blockState.metrics.blocksByDay[day] = (blockState.metrics.blocksByDay[day] || 0) + 1;
+}
+
+function pruneRecentBlocks(nowMs) {
+  const windowMs = config.antiBlock?.circuitBreaker?.windowMs ?? 5 * 60 * 1000;
+  const cutoff = nowMs - windowMs;
+  blockState.recentBlockTs = blockState.recentBlockTs.filter((t) => t >= cutoff);
+}
+
+function recordBlockForCircuitBreaker() {
+  const nowMs = Date.now();
+  blockState.recentBlockTs.push(nowMs);
+  pruneRecentBlocks(nowMs);
+
+  const threshold = config.antiBlock?.circuitBreaker?.threshold ?? 3;
+  const openMs = config.antiBlock?.circuitBreaker?.openMs ?? 30 * 60 * 1000;
+  if (blockState.recentBlockTs.length >= threshold) {
+    const until = nowMs + openMs;
+    if (until > blockState.circuitOpenUntilMs) {
+      blockState.circuitOpenUntilMs = until;
+      logBlockEvent({
+        action: 'circuit_open',
+        windowMs: config.antiBlock?.circuitBreaker?.windowMs ?? 5 * 60 * 1000,
+        threshold,
+        openMs,
+        openUntil: new Date(until).toISOString()
+      });
+    }
+  }
+}
+
+async function enforceCircuitBreaker({ kind, url, context } = {}) {
+  const nowMs = Date.now();
+  if (!blockState.circuitOpenUntilMs || nowMs >= blockState.circuitOpenUntilMs) return;
+
+  const remainingMs = blockState.circuitOpenUntilMs - nowMs;
+  const mode =
+    (config.antiBlock?.circuitBreaker?.mode || '').trim() ||
+    (process.env.GITHUB_ACTIONS ? 'failfast' : 'sleep');
+
+  logBlockEvent({ action: 'circuit_open_block', mode, remainingMs, kind, url, context });
+  if (mode === 'sleep') {
+    await sleep(remainingMs);
+    return;
+  }
+  throw new CircuitBreakerOpenError(`Circuit breaker abierto (${Math.round(remainingMs / 1000)}s restantes)`, {
+    kind,
+    url,
+    remainingMs,
+    context
+  });
 }
 
 async function pauseOnBlock(attempt, meta) {
@@ -136,6 +231,9 @@ async function fetchTextWithTimeout(url, { headers, timeoutMs } = {}) {
 async function fetchJsonResilient(url, { context, timeoutMs, maxAttempts } = {}) {
   const attempts = maxAttempts ?? config.antiBlock?.maxAttempts ?? 5;
 
+  // Si el circuito está abierto, aplica política (sleep o failfast)
+  await enforceCircuitBreaker({ kind: 'api', url, context });
+
   let lastErr = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const ua = config.getRandomUserAgent();
@@ -147,6 +245,12 @@ async function fetchJsonResilient(url, { context, timeoutMs, maxAttempts } = {})
 
       const block = detectBlock({ status: res.status, text, contentType });
       if (block.blocked) {
+        // Rate limit heurística: 429 consecutivos
+        if (res.status === 429) blockState.consecutive429 += 1;
+        else blockState.consecutive429 = 0;
+
+        bumpBlockMetrics({ kind: 'api', reason: block.reason });
+        recordBlockForCircuitBreaker();
         logBlockEvent({ kind: 'api', url, status: res.status, reason: block.reason, attempt, context });
         throw new BlockDetectedError(`Bloqueo detectado (API): ${block.reason}`, {
           url,
@@ -169,6 +273,8 @@ async function fetchJsonResilient(url, { context, timeoutMs, maxAttempts } = {})
         // Si no es JSON, probablemente es HTML/otro payload
         const block2 = detectBlock({ status: res.status, text, contentType: contentType || 'unknown' });
         if (block2.blocked) {
+          bumpBlockMetrics({ kind: 'api', reason: block2.reason });
+          recordBlockForCircuitBreaker();
           logBlockEvent({ kind: 'api', url, status: res.status, reason: block2.reason, attempt, context });
           throw new BlockDetectedError(`Bloqueo detectado (API parse): ${block2.reason}`, {
             url,
@@ -183,6 +289,11 @@ async function fetchJsonResilient(url, { context, timeoutMs, maxAttempts } = {})
       lastErr = err;
       const retryable = err?.name === 'BlockDetectedError' || err?.name === 'TimeoutError';
       if (retryable && attempt < attempts) {
+        // En caso de muchos 429 consecutivos, abrimos circuito agresivamente (evita martillar)
+        const limitN = config.antiBlock?.rateLimit429?.threshold ?? 3;
+        if (blockState.consecutive429 >= limitN) {
+          recordBlockForCircuitBreaker();
+        }
         await pauseOnBlock(attempt, {
           kind: 'api',
           url,
@@ -208,17 +319,73 @@ async function fetchJsonResilient(url, { context, timeoutMs, maxAttempts } = {})
 
 async function createStealthBrowser({ headless } = {}) {
   ensureStealth();
+  const proxy = config.getRandomProxy?.() || null;
   const browser = await puppeteer.launch({
     headless: headless === false ? false : 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      ...(proxy ? [`--proxy-server=${proxy}`] : [])
+    ]
   });
   return browser;
 }
 
+function pickRandom(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomViewport() {
+  const vp = pickRandom([
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1536, height: 864 },
+    { width: 1600, height: 900 },
+    { width: 1920, height: 1080 }
+  ]);
+  return vp || { width: 1440, height: 900 };
+}
+
+function randomTimezone() {
+  // Mantener cerca de Chile para coherencia, pero variar un poco el fingerprint.
+  return (
+    pickRandom(['America/Santiago', 'America/Lima', 'America/Argentina/Buenos_Aires', 'America/Bogota']) || 'America/Santiago'
+  );
+}
+
+async function simulateHumanBehavior(page) {
+  try {
+    const vp = page.viewport();
+    const w = vp?.width || 1200;
+    const h = vp?.height || 800;
+    // pequeños movimientos de mouse + pausas
+    const steps = 6 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < steps; i++) {
+      const x = 10 + Math.floor(Math.random() * (w - 20));
+      const y = 10 + Math.floor(Math.random() * (h - 20));
+      await page.mouse.move(x, y, { steps: 5 + Math.floor(Math.random() * 10) });
+      await sleep(60 + Math.floor(Math.random() * 180));
+    }
+    // scroll leve (solo si hay DOM)
+    await page.evaluate(() => {
+      try {
+        window.scrollBy(0, Math.floor(100 + Math.random() * 300));
+      } catch (_) {}
+    });
+  } catch (_) {
+    // best-effort
+  }
+}
+
 async function fetchJsonViaPuppeteer(browser, url, { context, timeoutMs } = {}) {
+  await enforceCircuitBreaker({ kind: 'puppeteer', url, context });
   const page = await browser.newPage();
   const ua = config.getRandomUserAgent();
   try {
+    const tz = randomTimezone();
     await page.evaluateOnNewDocument(() => {
       // hardening similar a scraper.js
       try {
@@ -233,8 +400,21 @@ async function fetchJsonViaPuppeteer(browser, url, { context, timeoutMs } = {}) 
       try {
         window.chrome = window.chrome || { runtime: {} };
       } catch (_) {}
+      // WebGL fingerprint (simple, best-effort)
+      try {
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function (p) {
+          // UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL
+          if (p === 37445) return 'Google Inc.';
+          if (p === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
+          return getParameter.call(this, p);
+        };
+      } catch (_) {}
     });
-    await page.setViewport({ width: 1440, height: 900 });
+    try {
+      await page.emulateTimezone(tz);
+    } catch (_) {}
+    await page.setViewport(randomViewport());
     await page.setUserAgent(ua);
     await page.setExtraHTTPHeaders({
       'accept-language': 'es-CL,es;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -251,6 +431,8 @@ async function fetchJsonViaPuppeteer(browser, url, { context, timeoutMs } = {}) 
     const text = await resp.text();
     const block = detectBlock({ status, text, contentType: headers['content-type'] || '' });
     if (block.blocked) {
+      bumpBlockMetrics({ kind: 'puppeteer', reason: block.reason });
+      recordBlockForCircuitBreaker();
       logBlockEvent({ kind: 'puppeteer', url, status, reason: block.reason, attempt: 1, context });
       throw new BlockDetectedError(`Bloqueo detectado (Puppeteer): ${block.reason}`, {
         url,
@@ -264,6 +446,8 @@ async function fetchJsonViaPuppeteer(browser, url, { context, timeoutMs } = {}) 
       err.meta = { url, status, context };
       throw err;
     }
+
+    await simulateHumanBehavior(page);
     return JSON.parse(text);
   } finally {
     await page.close();
@@ -275,14 +459,24 @@ async function fetchJsonViaPuppeteer(browser, url, { context, timeoutMs } = {}) 
   }
 }
 
+function getBlockMetricsSnapshot() {
+  return {
+    ...blockState.metrics,
+    circuitOpenUntil: blockState.circuitOpenUntilMs ? new Date(blockState.circuitOpenUntilMs).toISOString() : null,
+    consecutive429: blockState.consecutive429
+  };
+}
+
 module.exports = {
   BlockDetectedError,
   TimeoutError,
+  CircuitBreakerOpenError,
   buildRealisticHeaders,
   detectBlock,
   isRetryableForFallback,
   fetchJsonResilient,
   createStealthBrowser,
-  fetchJsonViaPuppeteer
+  fetchJsonViaPuppeteer,
+  getBlockMetricsSnapshot
 };
 
