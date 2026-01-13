@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS licitaciones (
   match_score NUMERIC(10,2),
   palabras_encontradas JSONB,
   
+  -- Tipo de proceso (distinción clave del SaaS):
+  -- - compra_agil: <100 UTM (se obtiene por scraping)
+  -- - licitacion: >=100 UTM (vía API, requiere anexos/proceso más complejo)
+  tipo_proceso TEXT DEFAULT 'compra_agil',
+  
   -- Documentos
   tiene_adjuntos BOOLEAN DEFAULT FALSE,
   
@@ -76,6 +81,7 @@ COMMENT ON COLUMN licitaciones.categoria IS 'Categoría interna calculada por ma
 COMMENT ON COLUMN licitaciones.categoria_match IS 'Label legible de la categoría (para UI)';
 COMMENT ON COLUMN licitaciones.match_score IS 'Score del matcher (dependiente de heurísticas / keywords)';
 COMMENT ON COLUMN licitaciones.palabras_encontradas IS 'JSON con palabras/keywords que gatillaron el match';
+COMMENT ON COLUMN licitaciones.tipo_proceso IS 'Tipo de proceso: compra_agil (<100 UTM) vs licitacion (>=100 UTM)';
 
 -- =====================================================
 -- TABLA: COMPRAS_AGILES (para compatibilidad/BI)
@@ -98,6 +104,26 @@ CREATE TABLE IF NOT EXISTS compras_agiles (
 );
 
 COMMENT ON TABLE compras_agiles IS 'Compras ágiles normalizadas (opcional si ya usas licitaciones)';
+
+-- =====================================================
+-- TABLA: LICITACIONES_API (>=100 UTM, fuente API)
+-- Nota: la API oficial cubre licitaciones (no compras ágiles).
+-- =====================================================
+CREATE TABLE IF NOT EXISTS licitaciones_api (
+  codigo TEXT PRIMARY KEY,
+  titulo TEXT,
+  organismo TEXT,
+  descripcion TEXT,
+  estado TEXT,
+  fecha_publicacion TIMESTAMP,
+  fecha_cierre TIMESTAMP,
+  link_detalle TEXT,
+  presupuesto_estimado NUMERIC(15,2),
+  tipo_proceso TEXT DEFAULT 'licitacion',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas desde API MercadoPúblico';
 
 -- =====================================================
 -- TABLA: LICITACION_ITEMS
@@ -492,6 +518,44 @@ ORDER BY l.created_at DESC;
 
 COMMENT ON VIEW licitaciones_all IS 'Listado completo de licitaciones (para dashboards que deben mostrar TODO)';
 
+-- Vista unificada para reportes: separa compra_agil vs licitacion.
+CREATE OR REPLACE VIEW oportunidades_all AS
+SELECT
+  'compra_agil'::text AS tipo_proceso,
+  l.codigo,
+  l.titulo,
+  l.organismo,
+  NULL::text AS descripcion,
+  l.estado,
+  (l.publicada_el)::timestamp AS fecha_publicacion,
+  (l.finaliza_el)::timestamp AS fecha_cierre,
+  l.link_detalle,
+  l.presupuesto_estimado,
+  l.categoria_match,
+  l.match_score,
+  l.palabras_encontradas,
+  l.created_at
+FROM licitaciones l
+UNION ALL
+SELECT
+  'licitacion'::text AS tipo_proceso,
+  a.codigo,
+  a.titulo,
+  a.organismo,
+  a.descripcion,
+  a.estado,
+  a.fecha_publicacion,
+  a.fecha_cierre,
+  a.link_detalle,
+  a.presupuesto_estimado,
+  NULL::text AS categoria_match,
+  NULL::numeric AS match_score,
+  NULL::jsonb AS palabras_encontradas,
+  a.created_at
+FROM licitaciones_api a;
+
+COMMENT ON VIEW oportunidades_all IS 'Unión de compras ágiles (scraping) y licitaciones (API) con campo tipo_proceso';
+
 -- Eventos calendario (apertura/cierre) usando campos disponibles.
 -- Nota: publicada_el/finaliza_el son strings ISO locales (YYYY-MM-DDTHH:MM:SS). Se castea a timestamp sin zona.
 CREATE OR REPLACE VIEW calendario_eventos AS
@@ -512,6 +576,24 @@ SELECT
   l.link_detalle
 FROM licitaciones l
 WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
+UNION ALL
+SELECT
+  a.codigo AS licitacion_codigo,
+  a.titulo,
+  'apertura'::text AS tipo,
+  a.fecha_publicacion AS fecha,
+  a.link_detalle
+FROM licitaciones_api a
+WHERE a.fecha_publicacion IS NOT NULL
+UNION ALL
+SELECT
+  a.codigo AS licitacion_codigo,
+  a.titulo,
+  'cierre'::text AS tipo,
+  a.fecha_cierre AS fecha,
+  a.link_detalle
+FROM licitaciones_api a
+WHERE a.fecha_cierre IS NOT NULL
 ORDER BY fecha ASC;
 
 COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para vista calendario en el frontend';
