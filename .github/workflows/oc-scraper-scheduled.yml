@@ -1,0 +1,95 @@
+name: Scraper Órdenes de Compra (MercadoPúblico API)
+
+on:
+  schedule:
+    - cron: "15 * * * *" # cada hora, minuto 15 (UTC)
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Fecha desde (YYYY-MM-DD)"
+        required: false
+        default: ""
+      to:
+        description: "Fecha hasta (YYYY-MM-DD)"
+        required: false
+        default: ""
+      max_pages:
+        description: "Máximo de páginas (si aplica)"
+        required: false
+        default: "10"
+      dry_run:
+        description: "Dry-run (no escribe en Supabase)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: oc-scraper-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+      # Config API OC
+      MP_OC_ENDPOINT: ${{ secrets.MP_OC_ENDPOINT }}
+      MP_API_TICKET: ${{ secrets.MP_API_TICKET }}
+
+      MP_OC_FROM: ${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}
+      MP_OC_TO: ${{ github.event_name == 'workflow_dispatch' && inputs.to || '' }}
+      MP_OC_MAX_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || '10' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+
+      - name: Validar secrets requeridos
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_KEY."
+            exit 1
+          fi
+          if [[ -z "${MP_OC_ENDPOINT:-}" && -z "${MP_API_TICKET:-}" ]]; then
+            echo "::error::Falta MP_OC_ENDPOINT o MP_API_TICKET (secrets)."
+            exit 1
+          fi
+
+      - name: Instalar dependencias
+        working-directory: mercadopublico-scraper
+        run: npm install
+
+      - name: Ejecutar scraper OC
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [[ -n "${MP_OC_FROM:-}" ]]; then ARGS+=(--from "$MP_OC_FROM"); fi
+          if [[ -n "${MP_OC_TO:-}" ]]; then ARGS+=(--to "$MP_OC_TO"); fi
+          if [[ -n "${MP_OC_MAX_PAGES:-}" ]]; then ARGS+=(--max-pages "$MP_OC_MAX_PAGES"); fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            ARGS+=(--dry-run)
+          fi
+          node oc_scraper.js "${ARGS[@]}"
+
