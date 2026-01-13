@@ -409,6 +409,7 @@ CREATE INDEX IF NOT EXISTS idx_oc_items_producto ON ordenes_compra_items(product
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
 -- =====================================================
+-- Nota: publicada_el/finaliza_el pueden venir vacíos desde scraping; se normalizan con NULLIF antes de castear.
 
 CREATE OR REPLACE VIEW oportunidades_all AS
 SELECT
