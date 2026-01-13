@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
+// Nota: este scraper aplica throttle + retry/backoff para mitigar error MP Codigo=10500.
 
 function env(name, fallback = '') {
   const v = process.env[name];
@@ -53,11 +54,45 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CompraAgil_VB/licitaciones-api' } });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+    err.status = res.status;
+    err.body = text;
+    throw err;
+  }
   return JSON.parse(text);
+}
+
+function isSimultaneousRequestError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (err.status !== 500) return false;
+  const body = typeof err.body === 'string' ? err.body : '';
+  return body.includes('"Codigo":10500') || body.toLowerCase().includes('peticiones simult');
+}
+
+async function fetchJsonWithRetry(url, { retries = 5, baseDelayMs = 600 } = {}) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fetchJson(url);
+    } catch (e) {
+      attempt += 1;
+      const status = e && typeof e === 'object' ? e.status : undefined;
+      // Reintentar solo casos típicos del API MP (rate-limit / simultáneas / inestabilidad)
+      const retryable = status === 429 || status === 502 || status === 503 || status === 504 || isSimultaneousRequestError(e);
+      if (!retryable || attempt > retries) throw e;
+      const wait = baseDelayMs * Math.pow(2, attempt - 1);
+      await sleep(wait);
+    }
+  }
 }
 
 function buildListUrl({ fechaDDMMAAAA, ticket, estado }) {
@@ -149,39 +184,64 @@ async function main() {
   const ticket = env('MP_API_TICKET').trim();
   if (!ticket) throw new Error('Falta MP_API_TICKET');
 
+  // Verificar que exista la tabla destino (evita fallar por schema desfasado en Supabase)
+  {
+    const probe = await supabase.from('licitaciones_api').select('codigo').limit(1);
+    if (probe.error) {
+      const msg = String(probe.error?.message || probe.error);
+      if (msg.toLowerCase().includes("could not find the table 'public.licitaciones_api'")) {
+        console.warn(
+          "[lic-api] WARNING: No existe la tabla 'licitaciones_api' en Supabase (schema no aplicado). Se omite el scraper."
+        );
+        return;
+      }
+      throw probe.error;
+    }
+  }
+
   const from = env('MP_LIC_FROM').trim() || todayYYYYMMDD();
   const to = env('MP_LIC_TO').trim() || from;
   const estado = env('MP_LIC_ESTADO').trim() || '';
+  const fetchDetail = env('MP_LIC_FETCH_DETAIL', 'false').trim().toLowerCase() === 'true';
   const fechas = dateRangeDDMMAAAA(from, to);
   if (!fechas.length) throw new Error('Rango inválido. Usa MP_LIC_FROM/MP_LIC_TO en formato YYYY-MM-DD');
 
-  const codigos = new Set();
+  const rowsByCodigo = new Map();
   for (const fecha of fechas) {
     const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket, estado });
-    const payload = await fetchJson(url);
+    const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 600 });
     const listado = extractListado(payload);
     for (const r of listado) {
-      const codigo = String(pick(r, ['CodigoExterno', 'codigo', 'Codigo', 'CodigoLicitacion']) || '').trim();
-      if (codigo) codigos.add(codigo);
+      const mapped = mapApiRowToMinimal(r, r);
+      if (mapped) rowsByCodigo.set(mapped.codigo, mapped);
     }
   }
 
-  console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
+  console.log(
+    `[lic-api] codigos únicos: ${rowsByCodigo.size} (${from}..${to}) estado=${estado || '(sin filtro)'} detalle=${
+      fetchDetail ? 'ON' : 'OFF'
+    }`
+  );
 
-  const rows = [];
-  for (const codigo of codigos) {
-    try {
-      const url = buildDetailUrl({ codigo, ticket });
-      const payload = await fetchJson(url);
-      // Muchos responses incluyen Listado/Licitacion; tomamos el primer objeto de detalle.
-      const list = extractListado(payload);
-      const detail = list && list.length ? list[0] : payload;
-      const mapped = mapApiRowToMinimal({}, detail);
-      if (mapped) rows.push(mapped);
-    } catch (e) {
-      console.warn(`[lic-api] falló detalle ${codigo}: ${String(e?.message || e)}`);
+  if (fetchDetail && rowsByCodigo.size) {
+    for (const codigo of rowsByCodigo.keys()) {
+      try {
+        const url = buildDetailUrl({ codigo, ticket });
+        const payload = await fetchJsonWithRetry(url, { retries: 4, baseDelayMs: 900 });
+        // Muchos responses incluyen Listado/Licitacion; tomamos el primer objeto de detalle.
+        const list = extractListado(payload);
+        const detail = list && list.length ? list[0] : payload;
+        const mapped = mapApiRowToMinimal({}, detail);
+        if (mapped) rowsByCodigo.set(mapped.codigo, mapped);
+        // Throttle más agresivo para evitar 10500
+        await sleep(350);
+      } catch (e) {
+        console.warn(`[lic-api] falló detalle ${codigo}: ${String(e?.message || e)}`);
+      }
     }
   }
+
+  const rows = Array.from(rowsByCodigo.values());
 
   if (rows.length) {
     const { error } = await supabase.from('licitaciones_api').upsert(rows, { onConflict: 'codigo' });

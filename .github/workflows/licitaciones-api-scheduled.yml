@@ -3,6 +3,13 @@ name: Scraper Licitaciones (API MercadoPúblico)
 on:
   schedule:
     - cron: "10 * * * *" # cada hora, minuto 10 (UTC)
+  push:
+    branches:
+      - cursor/vistas-faltantes-supabase-2d2b
+    paths:
+      - mercadopublico-scraper/licitaciones_api_scraper.js
+      - mercadopublico-scraper/package.json
+      - mercadopublico-scraper/package-lock.json
   workflow_dispatch:
     inputs:
       from:

@@ -2,6 +2,11 @@ name: Apply Supabase schema (manual)
 
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - cursor/vistas-faltantes-supabase-2d2b
+    paths:
+      - supabase/schema.sql
 
 concurrency:
   group: supabase-apply-schema-${{ github.workflow }}-${{ github.ref }}

@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
+// Nota: este scraper tolera 404 en detalle y reintenta errores transitorios del API.
 
 function env(name, fallback = '') {
   const v = process.env[name];
@@ -53,11 +54,38 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CompraAgil_VB/oc-scraper' } });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+    err.status = res.status;
+    err.body = text;
+    throw err;
+  }
   return JSON.parse(text);
+}
+
+async function fetchJsonWithRetry(url, { retries = 3, baseDelayMs = 400 } = {}) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fetchJson(url);
+    } catch (e) {
+      attempt += 1;
+      const status = e && typeof e === 'object' ? e.status : undefined;
+      // No reintentar 404: son OCs inexistentes/ocultas y se deben saltar.
+      if (status === 404) throw e;
+      if (attempt > retries) throw e;
+      const wait = baseDelayMs * Math.pow(2, attempt - 1);
+      await sleep(wait);
+    }
+  }
 }
 
 function pick(o, keys) {
@@ -172,28 +200,46 @@ async function main() {
 
   const codigos = new Set();
   for (const fecha of fechas) {
-    const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket });
-    const payload = await fetchJson(url);
-    for (const r of extractList(payload)) {
-      const codigo = String(pick(r, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden']) || '').trim();
-      if (codigo) codigos.add(codigo);
+    try {
+      const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket });
+      const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 700 });
+      for (const r of extractList(payload)) {
+        const codigo = String(pick(r, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden']) || '').trim();
+        if (codigo) codigos.add(codigo);
+      }
+    } catch (e) {
+      console.warn(`[oc] falló listado fecha=${fecha} (se omite): ${String(e?.message || e)}`);
     }
   }
 
   console.log(`[oc] codigos únicos: ${codigos.size} (${from}..${to})`);
+  if (codigos.size === 0) {
+    console.warn('[oc] No se encontraron códigos (o el listado falló). No se aplican cambios en Supabase.');
+    return;
+  }
 
   const headers = [];
   const itemsByOc = new Map();
 
   for (const codigoOc of codigos) {
-    const url = buildDetailUrl({ codigoOc, ticket });
-    const payload = await fetchJson(url);
-    const detail = extractDetail(payload);
-    const header = mapHeader(detail);
-    if (!header) continue;
-    headers.push(header);
-    const items = extractItems(detail).map((it) => mapItem(it, header.numero_oc));
-    itemsByOc.set(header.numero_oc, items);
+    try {
+      const url = buildDetailUrl({ codigoOc, ticket });
+      const payload = await fetchJsonWithRetry(url, { retries: 3, baseDelayMs: 500 });
+      const detail = extractDetail(payload);
+      const header = mapHeader(detail);
+      if (!header) continue;
+      headers.push(header);
+      const items = extractItems(detail).map((it) => mapItem(it, header.numero_oc));
+      itemsByOc.set(header.numero_oc, items);
+      // Micro pausa para evitar gatillar rate-limits del API
+      await sleep(120);
+    } catch (e) {
+      if (e && typeof e === 'object' && e.status === 404) {
+        console.warn(`[oc] detalle 404 (se omite): ${codigoOc}`);
+        continue;
+      }
+      console.warn(`[oc] falló detalle ${codigoOc}: ${String(e?.message || e)}`);
+    }
   }
 
   if (headers.length) {
