@@ -78,6 +78,28 @@ COMMENT ON COLUMN licitaciones.match_score IS 'Score del matcher (dependiente de
 COMMENT ON COLUMN licitaciones.palabras_encontradas IS 'JSON con palabras/keywords que gatillaron el match';
 
 -- =====================================================
+-- TABLA: COMPRAS_AGILES (para compatibilidad/BI)
+-- Nota: en muchos despliegues "compras ágiles" viven en `licitaciones`.
+-- Esta tabla permite persistir un subset/variant si tu stack la requiere.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS compras_agiles (
+  codigo TEXT PRIMARY KEY,
+  titulo TEXT,
+  organismo TEXT,
+  descripcion TEXT,
+  fecha_publicacion TIMESTAMP,
+  fecha_cierre TIMESTAMP,
+  link_detalle TEXT,
+  match_score NUMERIC(10,2),
+  categoria TEXT,
+  categoria_match TEXT,
+  palabras_encontradas JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE compras_agiles IS 'Compras ágiles normalizadas (opcional si ya usas licitaciones)';
+
+-- =====================================================
 -- TABLA: LICITACION_ITEMS
 -- Almacena productos/items de cada licitación
 -- =====================================================
@@ -303,20 +325,7 @@ COMMENT ON VIEW dashboard_estado IS 'Métricas generales de últimos 7 días';
 -- DATOS DE PRUEBA (OPCIONAL)
 -- =====================================================
 
--- Descomentar para insertar datos de prueba:
-/*
-INSERT INTO licitaciones (codigo, titulo, organismo, presupuesto_estimado, fecha_publicacion, fecha_cierre_primer_llamado)
-VALUES 
-  ('1161266-3-COT26', 'ADQUISICIÓN DE AGENDAS 2026', 'I MUNICIPALIDAD DE TUCAPEL', 300000, NOW(), NOW() + INTERVAL '3 days'),
-  ('1161267-4-COT26', 'COMPRA DE MATERIAL DE OFICINA', 'MINISTERIO DE SALUD', 500000, NOW(), NOW() + INTERVAL '5 days')
-ON CONFLICT (codigo) DO NOTHING;
-
-INSERT INTO licitacion_items (licitacion_codigo, item_index, nombre, descripcion, cantidad, unidad)
-VALUES
-  ('1161266-3-COT26', 1, 'Agendas', 'AGENDA CLÁSICA AÑO 2026 RHEIN O SIMILAR', '30', 'Unidades'),
-  ('1161266-3-COT26', 2, 'Taco calendario', 'TACO CALENDARIO 2026 11X17 CM', '40', 'Globales')
-ON CONFLICT (licitacion_codigo, item_index) DO NOTHING;
-*/
+-- Nota: NO se incluyen inserts de ejemplo en este repositorio.
 
 -- =====================================================
 -- FIN DEL SCHEMA
@@ -395,13 +404,44 @@ CREATE TABLE IF NOT EXISTS cliente_notificaciones (
 CREATE TABLE IF NOT EXISTS cliente_ofertas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
-  licitacion_codigo TEXT NOT NULL REFERENCES licitaciones(codigo) ON DELETE CASCADE,
-  estado TEXT NOT NULL DEFAULT 'pendiente', -- pendiente|en_proceso|enviada|fallida|cancelada
+  -- Puede apuntar a una licitación del scraper o a compras_agiles (según tu stack)
+  licitacion_codigo TEXT REFERENCES licitaciones(codigo) ON DELETE CASCADE,
+  compra_agil_codigo TEXT REFERENCES compras_agiles(codigo) ON DELETE CASCADE,
+  estado TEXT NOT NULL DEFAULT 'sugerida', -- sugerida|aprobada|enviada|fallida
+  match_score NUMERIC(10,2),
+  monto_oferta NUMERIC(15,2),
+  oferta_id_mp TEXT,
+  respuesta_mp JSONB,
   motivo TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE (cliente_id, licitacion_codigo)
+  CHECK (estado IN ('sugerida','aprobada','enviada','fallida')),
+  CHECK (licitacion_codigo IS NOT NULL OR compra_agil_codigo IS NOT NULL)
 );
+
+-- Unicidad por cliente + target (permite uno u otro)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cliente_ofertas_cliente_licitacion
+  ON cliente_ofertas(cliente_id, licitacion_codigo)
+  WHERE licitacion_codigo IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cliente_ofertas_cliente_compra_agil
+  ON cliente_ofertas(cliente_id, compra_agil_codigo)
+  WHERE compra_agil_codigo IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cliente_ofertas_estado
+  ON cliente_ofertas(estado);
+
+-- Migración segura (si la tabla ya existe en tu Supabase): agregar columnas faltantes
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS compra_agil_codigo TEXT;
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS match_score NUMERIC(10,2);
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS monto_oferta NUMERIC(15,2);
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS oferta_id_mp TEXT;
+ALTER TABLE IF EXISTS cliente_ofertas
+  ADD COLUMN IF NOT EXISTS respuesta_mp JSONB;
 
 -- =====================================================
 -- ÍNDICES CLIENTE
