@@ -200,15 +200,23 @@ async function main() {
 
   const codigos = new Set();
   for (const fecha of fechas) {
-    const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket });
-    const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 700 });
-    for (const r of extractList(payload)) {
-      const codigo = String(pick(r, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden']) || '').trim();
-      if (codigo) codigos.add(codigo);
+    try {
+      const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket });
+      const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 700 });
+      for (const r of extractList(payload)) {
+        const codigo = String(pick(r, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden']) || '').trim();
+        if (codigo) codigos.add(codigo);
+      }
+    } catch (e) {
+      console.warn(`[oc] falló listado fecha=${fecha} (se omite): ${String(e?.message || e)}`);
     }
   }
 
   console.log(`[oc] codigos únicos: ${codigos.size} (${from}..${to})`);
+  if (codigos.size === 0) {
+    console.warn('[oc] No se encontraron códigos (o el listado falló). No se aplican cambios en Supabase.');
+    return;
+  }
 
   const headers = [];
   const itemsByOc = new Map();
