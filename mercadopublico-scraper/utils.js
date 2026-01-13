@@ -45,6 +45,20 @@ async function sleepRandom(minMs, maxMs) {
   await sleep(ms);
 }
 
+function applyJitter(ms, jitterPct = 0.3) {
+  const base = Number(ms);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  const pct = Math.max(0, Math.min(1, Number(jitterPct)));
+  const delta = base * pct;
+  const jittered = base + (Math.random() * 2 - 1) * delta; // ±delta
+  return Math.max(0, Math.round(jittered));
+}
+
+async function sleepRandomWithJitter(minMs, maxMs, jitterPct = 0.3) {
+  const ms = randomInt(minMs, maxMs);
+  await sleep(applyJitter(ms, jitterPct));
+}
+
 function toIsoNow() {
   return new Date().toISOString();
 }
@@ -55,6 +69,8 @@ module.exports = {
   splitOrganismoDepartamento,
   sleep,
   sleepRandom,
+  applyJitter,
+  sleepRandomWithJitter,
   toIsoNow
 };
 
