@@ -53,11 +53,38 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CompraAgil_VB/oc-scraper' } });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+    err.status = res.status;
+    err.body = text;
+    throw err;
+  }
   return JSON.parse(text);
+}
+
+async function fetchJsonWithRetry(url, { retries = 3, baseDelayMs = 400 } = {}) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fetchJson(url);
+    } catch (e) {
+      attempt += 1;
+      const status = e && typeof e === 'object' ? e.status : undefined;
+      // No reintentar 404: son OCs inexistentes/ocultas y se deben saltar.
+      if (status === 404) throw e;
+      if (attempt > retries) throw e;
+      const wait = baseDelayMs * Math.pow(2, attempt - 1);
+      await sleep(wait);
+    }
+  }
 }
 
 function pick(o, keys) {
@@ -186,14 +213,24 @@ async function main() {
   const itemsByOc = new Map();
 
   for (const codigoOc of codigos) {
-    const url = buildDetailUrl({ codigoOc, ticket });
-    const payload = await fetchJson(url);
-    const detail = extractDetail(payload);
-    const header = mapHeader(detail);
-    if (!header) continue;
-    headers.push(header);
-    const items = extractItems(detail).map((it) => mapItem(it, header.numero_oc));
-    itemsByOc.set(header.numero_oc, items);
+    try {
+      const url = buildDetailUrl({ codigoOc, ticket });
+      const payload = await fetchJsonWithRetry(url, { retries: 3, baseDelayMs: 500 });
+      const detail = extractDetail(payload);
+      const header = mapHeader(detail);
+      if (!header) continue;
+      headers.push(header);
+      const items = extractItems(detail).map((it) => mapItem(it, header.numero_oc));
+      itemsByOc.set(header.numero_oc, items);
+      // Micro pausa para evitar gatillar rate-limits del API
+      await sleep(120);
+    } catch (e) {
+      if (e && typeof e === 'object' && e.status === 404) {
+        console.warn(`[oc] detalle 404 (se omite): ${codigoOc}`);
+        continue;
+      }
+      console.warn(`[oc] falló detalle ${codigoOc}: ${String(e?.message || e)}`);
+    }
   }
 
   if (headers.length) {

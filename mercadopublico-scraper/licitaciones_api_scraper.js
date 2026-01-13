@@ -53,11 +53,45 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CompraAgil_VB/licitaciones-api' } });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+    err.status = res.status;
+    err.body = text;
+    throw err;
+  }
   return JSON.parse(text);
+}
+
+function isSimultaneousRequestError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (err.status !== 500) return false;
+  const body = typeof err.body === 'string' ? err.body : '';
+  return body.includes('"Codigo":10500') || body.toLowerCase().includes('peticiones simult');
+}
+
+async function fetchJsonWithRetry(url, { retries = 5, baseDelayMs = 600 } = {}) {
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fetchJson(url);
+    } catch (e) {
+      attempt += 1;
+      const status = e && typeof e === 'object' ? e.status : undefined;
+      // Reintentar solo casos típicos del API MP (rate-limit / simultáneas / inestabilidad)
+      const retryable = status === 429 || status === 502 || status === 503 || status === 504 || isSimultaneousRequestError(e);
+      if (!retryable || attempt > retries) throw e;
+      const wait = baseDelayMs * Math.pow(2, attempt - 1);
+      await sleep(wait);
+    }
+  }
 }
 
 function buildListUrl({ fechaDDMMAAAA, ticket, estado }) {
@@ -158,7 +192,7 @@ async function main() {
   const codigos = new Set();
   for (const fecha of fechas) {
     const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket, estado });
-    const payload = await fetchJson(url);
+    const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 600 });
     const listado = extractListado(payload);
     for (const r of listado) {
       const codigo = String(pick(r, ['CodigoExterno', 'codigo', 'Codigo', 'CodigoLicitacion']) || '').trim();
@@ -172,12 +206,14 @@ async function main() {
   for (const codigo of codigos) {
     try {
       const url = buildDetailUrl({ codigo, ticket });
-      const payload = await fetchJson(url);
+      const payload = await fetchJsonWithRetry(url, { retries: 6, baseDelayMs: 700 });
       // Muchos responses incluyen Listado/Licitacion; tomamos el primer objeto de detalle.
       const list = extractListado(payload);
       const detail = list && list.length ? list[0] : payload;
       const mapped = mapApiRowToMinimal({}, detail);
       if (mapped) rows.push(mapped);
+      // Throttle para evitar errores 10500 (peticiones simultáneas)
+      await sleep(150);
     } catch (e) {
       console.warn(`[lic-api] falló detalle ${codigo}: ${String(e?.message || e)}`);
     }
