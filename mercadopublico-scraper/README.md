@@ -109,6 +109,8 @@ Qué hace:
 
 - **`SUPABASE_URL`**: URL del proyecto Supabase.
 - **`SUPABASE_KEY`**: API key con permisos de lectura/escritura para las tablas (típicamente **service role** en CI).
+- **`MP_API_TICKET`** *(solo scraper OC)*: Ticket de la API oficial de MercadoPúblico para consultar Órdenes de Compra.
+  - Si **no** se configura en GitHub Actions, el workflow de OC **no falla**: emite un warning y **se omite** hasta que el secret exista.
 - **`MAX_PAGES`**:
   - `1` (default): procesa 1 página.
   - `N`: procesa N páginas.

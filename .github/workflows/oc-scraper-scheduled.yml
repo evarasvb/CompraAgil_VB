@@ -59,6 +59,7 @@ jobs:
 
       - name: Validar secrets requeridos
         shell: bash
+        id: validate
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_URL:-}" ]]; then
@@ -70,15 +71,19 @@ jobs:
             exit 1
           fi
           if [[ -z "${MP_API_TICKET:-}" ]]; then
-            echo "::error::Falta MP_API_TICKET (secret)."
-            exit 1
+            echo "::warning::MP_API_TICKET no está configurado. Se omitirá el scraper de Órdenes de Compra."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Instalar dependencias
+        if: steps.validate.outputs.skip != 'true'
         working-directory: mercadopublico-scraper
         run: npm install
 
       - name: Ejecutar scraper OC
+        if: steps.validate.outputs.skip != 'true'
         working-directory: mercadopublico-scraper
         shell: bash
         run: |
