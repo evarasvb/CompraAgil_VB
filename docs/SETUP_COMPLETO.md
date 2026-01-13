@@ -31,6 +31,27 @@
 
 ### 1.2 Crear Tablas en Supabase
 
+#### Opción recomendada (sin programar): 1 click desde GitHub Actions ✅
+
+Este repo incluye un workflow que aplica automáticamente `supabase/schema.sql` a tu proyecto.
+
+1) En Supabase:
+- Project Settings → Database → Connection string → **URI**
+- Copia la URI tipo:
+  - `postgresql://postgres:<DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres`
+
+2) En GitHub (repo `CompraAgil_VB`):
+- Settings → Secrets and variables → Actions → **New repository secret**
+- Name: `SUPABASE_DB_URL`
+- Value: pega la URI completa (incluye el password)
+
+3) Ejecutar el workflow:
+- GitHub → Actions → **Apply Supabase schema (manual)** → Run workflow
+
+> Si `SUPABASE_DB_URL` no está configurado, el workflow no falla: muestra warning y no aplica cambios.
+
+#### Opción manual (SQL Editor)
+
 Ejecuta este SQL en el SQL Editor de Supabase:
 
 ```sql
