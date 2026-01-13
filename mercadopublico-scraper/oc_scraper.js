@@ -14,6 +14,10 @@ function envInt(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function todayYYYYMMDD() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -69,15 +73,16 @@ function parseArgs(argv) {
     if (a === '--from') args.from = argv[++i] || null;
     else if (a === '--to') args.to = argv[++i] || null;
     else if (a === '--max-pages') args.maxPages = Number.parseInt(argv[++i] || '', 10); // compat (no se usa en endpoints oficiales)
+    else if (a === '--max-codigos') args.maxPages = Number.parseInt(argv[++i] || '', 10);
     else if (a === '--dry-run') args.dryRun = true;
   }
   return args;
 }
 
 function getSupabaseClient() {
-  const url = env('SUPABASE_URL');
-  const key = env('SUPABASE_KEY');
-  if (!url || !key) throw new Error('Faltan SUPABASE_URL y/o SUPABASE_KEY');
+  const url = env('SUPABASE_URL').trim();
+  const key = env('SUPABASE_SERVICE_KEY').trim() || env('SUPABASE_KEY').trim();
+  if (!url || !key) throw new Error('Faltan SUPABASE_URL y/o SUPABASE_SERVICE_KEY/SUPABASE_KEY');
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
@@ -144,6 +149,7 @@ async function fetchJsonWithRetries(url, { retries = 3, sleepMs = 1200 } = {}) {
         }
       });
       const text = await res.text();
+      if (res.status === 404) return null; // “Recurso no encontrado.” => tratamos como “sin datos”
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
       return JSON.parse(text);
     } catch (e) {
@@ -243,6 +249,12 @@ async function refreshItemsForOc(supabase, numero_oc, items) {
   if (ins.error) throw ins.error;
 }
 
+function isMissingTableError(err) {
+  const code = err?.code ? String(err.code) : '';
+  const msg = err?.message ? String(err.message) : '';
+  return code === 'PGRST205' || msg.includes("Could not find the table 'public.");
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const supabase = getSupabaseClient();
@@ -280,6 +292,10 @@ async function main() {
     const url = buildOcListUrl({ fechaDDMMAAAA: fecha, ticket });
     console.log(`[OC] List fecha=${fecha}: ${url}`);
     const payload = await fetchJsonWithRetries(url, { retries: 3, sleepMs: 1400 });
+    if (!payload) {
+      console.log(`[OC] fecha=${fecha}: 0 registros (404/no data)`);
+      continue;
+    }
     const list = extractOcList(payload);
     console.log(`[OC] fecha=${fecha}: ${list.length} registros`);
     for (const raw of list) {
@@ -289,13 +305,26 @@ async function main() {
     }
   }
 
-  console.log(`[OC] Códigos únicos a detallar: ${ocCodigos.size}`);
+  const defaultMax = envInt('MP_OC_MAX_CODIGOS', 200);
+  const maxCodigos = Number.isFinite(args.maxPages) && args.maxPages > 0 ? args.maxPages : defaultMax;
+  const delayMs = envInt('MP_OC_DELAY_MS', 300);
+
+  const codigosOrdenados = Array.from(ocCodigos).sort();
+  const codigosLimitados = maxCodigos ? codigosOrdenados.slice(0, maxCodigos) : codigosOrdenados;
+
+  console.log(
+    `[OC] Códigos únicos a detallar: ${ocCodigos.size}. Procesando: ${codigosLimitados.length}. delayMs=${delayMs}`
+  );
 
   // 2) Detalle por OC (cabecera + items)
-  for (const codigoOc of ocCodigos) {
+  for (const codigoOc of codigosLimitados) {
     const url = buildOcDetailUrl({ codigoOc, ticket });
     try {
       const payload = await fetchJsonWithRetries(url, { retries: 3, sleepMs: 1400 });
+      if (!payload) {
+        console.warn(`[OC] Detalle ${codigoOc}: 404/no data`);
+        continue;
+      }
 
       // Flexible: a veces viene envuelto
       const detailObj =
@@ -312,6 +341,8 @@ async function main() {
       itemsByOc.set(header.numero_oc, mappedItems);
     } catch (e) {
       console.warn(`[OC] Falló detalle ${codigoOc}: ${String(e?.message || e)}`);
+    } finally {
+      if (delayMs > 0) await sleep(delayMs);
     }
   }
 
@@ -328,19 +359,36 @@ async function main() {
     return;
   }
 
-  await upsertOrdenesCompra(supabase, headers);
-  console.log(`[OC] Upsert OK: ${headers.length} filas en ordenes_compra`);
+  try {
+    await upsertOrdenesCompra(supabase, headers);
+    console.log(`[OC] Upsert OK: ${headers.length} filas en ordenes_compra`);
 
-  // items: refresh por OC
-  let itemCount = 0;
-  for (const [numero_oc, items] of itemsByOc.entries()) {
-    await refreshItemsForOc(supabase, numero_oc, items);
-    itemCount += items.length;
+    // items: refresh por OC
+    let itemCount = 0;
+    for (const [numero_oc, items] of itemsByOc.entries()) {
+      await refreshItemsForOc(supabase, numero_oc, items);
+      itemCount += items.length;
+    }
+    console.log(`[OC] Refresh items OK: ${itemCount} filas en ordenes_compra_items`);
+  } catch (e) {
+    if (isMissingTableError(e)) {
+      console.warn(
+        "[OC] ⚠️  Las tablas de Supabase no están aplicadas (schema). Ejecuta el workflow 'Apply Supabase schema (manual)' y reintenta."
+      );
+      return;
+    }
+    throw e;
   }
-  console.log(`[OC] Refresh items OK: ${itemCount} filas en ordenes_compra_items`);
 }
 
 main().catch((err) => {
+  if (isMissingTableError(err)) {
+    console.warn(
+      "[OC] ⚠️  Las tablas de Supabase no están aplicadas (schema). Ejecuta el workflow 'Apply Supabase schema (manual)' y reintenta."
+    );
+    process.exitCode = 0;
+    return;
+  }
   console.error('[OC] Fallo fatal:', err);
   process.exitCode = 1;
 });

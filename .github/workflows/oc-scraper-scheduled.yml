@@ -38,6 +38,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       # Config API OC
       MP_API_TICKET: ${{ secrets.MP_API_TICKET }}
@@ -45,15 +46,17 @@ jobs:
       MP_OC_FROM: ${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}
       MP_OC_TO: ${{ github.event_name == 'workflow_dispatch' && inputs.to || '' }}
       MP_OC_MAX_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || '10' }}
+      MP_OC_MAX_CODIGOS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || '200' }}
+      MP_OC_DELAY_MS: "300"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 18
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
           cache-dependency-path: mercadopublico-scraper/package-lock.json
 
@@ -66,8 +69,8 @@ jobs:
             echo "::error::Falta el secret SUPABASE_URL."
             exit 1
           fi
-          if [[ -z "${SUPABASE_KEY:-}" ]]; then
-            echo "::error::Falta el secret SUPABASE_KEY."
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_SERVICE_KEY o SUPABASE_KEY."
             exit 1
           fi
           if [[ -z "${MP_API_TICKET:-}" ]]; then
@@ -91,7 +94,7 @@ jobs:
           ARGS=()
           if [[ -n "${MP_OC_FROM:-}" ]]; then ARGS+=(--from "$MP_OC_FROM"); fi
           if [[ -n "${MP_OC_TO:-}" ]]; then ARGS+=(--to "$MP_OC_TO"); fi
-          if [[ -n "${MP_OC_MAX_PAGES:-}" ]]; then ARGS+=(--max-pages "$MP_OC_MAX_PAGES"); fi
+          if [[ -n "${MP_OC_MAX_PAGES:-}" ]]; then ARGS+=(--max-codigos "$MP_OC_MAX_PAGES"); fi
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
             ARGS+=(--dry-run)
           fi

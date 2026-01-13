@@ -27,9 +27,23 @@
 3. Ve a **Project Settings** → **API**
 4. Copia:
    - **Project URL**: `https://juiskeeutbaipwbeeezw.supabase.co`
-   - **`service_role` secret key** (para el scraper)
+   - **`service_role` secret key** (para los scrapers en GitHub Actions)
+
+### 1.2 (RECOMENDADO) Crear/actualizar tablas con 1 click (sin programar)
+
+**No ejecutes SQL manual si no es necesario.** El repo incluye `supabase/schema.sql` con todas las tablas/vistas necesarias (Compras Ágiles, Licitaciones API, Órdenes de Compra, BI, etc.) y un workflow para aplicarlo.
+
+Pasos:
+
+1. En GitHub, agrega el secret **`SUPABASE_DB_URL`** (connection string Postgres de tu proyecto Supabase).
+2. Ve a **Actions** y ejecuta el workflow **“Apply Supabase schema (manual)”**.
+3. En Supabase → Table Editor, verifica que existan (al menos):
+   - Tablas: `licitaciones`, `licitaciones_api`, `ordenes_compra`, `ordenes_compra_items`, `cliente_inventario`, `cliente_ofertas`
+   - Vistas: `licitaciones_all`, `oportunidades_all`, `calendario_eventos`
 
 ### 1.2 Crear Tablas en Supabase
+
+> ⚠️ **DEPRECADO**: esta sección era la forma antigua “manual”. Mantengo el SQL solo como referencia histórica.
 
 Ejecuta este SQL en el SQL Editor de Supabase:
 
