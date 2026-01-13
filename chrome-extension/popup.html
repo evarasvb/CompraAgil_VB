@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FirmaVB</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title">FirmaVB</div>
+      <div class="subtitle">Sincronización de postulaciones</div>
+    </header>
+
+    <section class="card">
+      <div class="sectionTitle">Configuración</div>
+      <label>
+        Supabase URL
+        <input id="supabaseUrl" placeholder="https://xxxx.supabase.co" />
+      </label>
+      <label>
+        Supabase anon key
+        <input id="supabaseAnonKey" placeholder="eyJhbGciOi..." />
+      </label>
+      <label>
+        Cliente ID (UUID)
+        <input id="clienteId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+      </label>
+      <div class="row">
+        <button id="saveConfig" class="primary">Guardar</button>
+        <button id="loadConfig" class="secondary">Recargar</button>
+      </div>
+      <div id="configStatus" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <div class="sectionTitle">Contexto MercadoPúblico</div>
+      <div class="kv">
+        <div class="k">Código detectado</div>
+        <div class="v" id="codigoDetectado">—</div>
+      </div>
+      <div class="kv">
+        <div class="k">URL</div>
+        <div class="v small" id="urlActual">—</div>
+      </div>
+      <div class="row">
+        <button id="sync" class="primary">Sincronizar ofertas aprobadas</button>
+      </div>
+      <div id="syncStatus" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <div class="sectionTitle">Ofertas</div>
+      <div id="offers" class="offers"></div>
+      <div class="muted small">
+        Nota: la postulación real se ejecuta en la página (sesión logueada). Aquí registras el resultado en Supabase.
+      </div>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
+

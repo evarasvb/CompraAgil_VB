@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "FirmaVB Postulador (MercadoPúblico)",
+  "version": "0.1.0",
+  "description": "Sincroniza ofertas aprobadas desde Supabase y ejecuta/registrar postulaciones en MercadoPúblico usando la sesión del navegador.",
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
+  "host_permissions": [
+    "https://*.supabase.co/*",
+    "https://buscador.mercadopublico.cl/*",
+    "https://www.mercadopublico.cl/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "FirmaVB",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://buscador.mercadopublico.cl/*",
+        "https://www.mercadopublico.cl/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+
