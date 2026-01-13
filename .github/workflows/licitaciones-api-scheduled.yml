@@ -1,0 +1,90 @@
+name: Scraper Licitaciones (API MercadoPúblico)
+
+on:
+  schedule:
+    - cron: "45 * * * *" # cada hora, minuto 45 (UTC)
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Fecha desde (YYYY-MM-DD)"
+        required: false
+        default: ""
+      to:
+        description: "Fecha hasta (YYYY-MM-DD)"
+        required: false
+        default: ""
+      estado:
+        description: "Filtro estado (opcional)"
+        required: false
+        default: ""
+
+concurrency:
+  group: licitaciones-api-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lic_api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+      MP_API_TICKET: ${{ secrets.MP_API_TICKET }}
+      MP_LIC_FROM: ${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}
+      MP_LIC_TO: ${{ github.event_name == 'workflow_dispatch' && inputs.to || '' }}
+      MP_LIC_ESTADO: ${{ github.event_name == 'workflow_dispatch' && inputs.estado || '' }}
+
+      # Throttling (evita 10500/429)
+      MP_LIC_DELAY_MS: "450"
+      MP_LIC_MAX_CODIGOS: "150"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+
+      - name: Validar secrets requeridos
+        shell: bash
+        id: validate
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_SERVICE_KEY o SUPABASE_KEY."
+            exit 1
+          fi
+          if [[ -z "${MP_API_TICKET:-}" ]]; then
+            echo "::warning::MP_API_TICKET no está configurado. Se omitirá el scraper de Licitaciones."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar dependencias
+        if: steps.validate.outputs.skip != 'true'
+        working-directory: mercadopublico-scraper
+        run: npm install
+
+      - name: Ejecutar scraper Licitaciones API
+        if: steps.validate.outputs.skip != 'true'
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node licitaciones_api_scraper.js
+

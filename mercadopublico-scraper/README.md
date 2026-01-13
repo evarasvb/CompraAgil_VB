@@ -19,7 +19,7 @@ El objetivo es **persistir los datos en Supabase** (Postgres) usando `upsert` pa
 
 ### 2) Requisitos
 
-- **Node.js 18+**
+- **Node.js 20+** (recomendado: `@supabase/supabase-js` ya no soportará Node 18 en futuras versiones)
 - **npm**
 - Linux/macOS/Windows. En entornos CI (GitHub Actions), Puppeteer descarga Chromium automáticamente.
 
@@ -113,6 +113,9 @@ Qué hace:
 - **`SUPABASE_SERVICE_KEY`** *(recomendado)*: key con permisos completos para jobs automáticos (matching/postulación) cuando RLS está habilitado.
 - **`MP_API_TICKET`** *(solo scraper OC)*: Ticket de la API oficial de MercadoPúblico para consultar Órdenes de Compra.
   - Si **no** se configura en GitHub Actions, el workflow de OC **no falla**: emite un warning y **se omite** hasta que el secret exista.
+- **`MP_LIC_FROM` / `MP_LIC_TO` / `MP_LIC_ESTADO`** *(solo licitaciones API)*: rango/filtro para `licitaciones_api_scraper.js` (formato `YYYY-MM-DD`).
+- **`MP_LIC_MAX_CODIGOS` / `MP_LIC_DELAY_MS`** *(solo licitaciones API)*: límites/throttling para evitar 429/10500.
+- **`MP_OC_MAX_CODIGOS` / `MP_OC_DELAY_MS`** *(solo OC)*: límites/throttling para evitar rate limits.
 - **`MP_POSTULACION_ENDPOINT`** *(postulación automática)*: endpoint real que reciba un POST y ejecute la postulación en MercadoPúblico.
   - Este repo **no inventa** ese endpoint; el worker se puede dejar corriendo y hará **skip** hasta que el secret exista.
 - **`MAX_PAGES`**:
@@ -222,7 +225,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Install
         working-directory: mercadopublico-scraper
         run: npm install
