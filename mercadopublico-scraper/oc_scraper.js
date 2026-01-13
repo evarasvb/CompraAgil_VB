@@ -89,6 +89,10 @@ async function upsertPendingExtensionSync(supabase, row) {
         url: row.url || null,
         reason: row.reason || null,
         context: row.context || null,
+        status: 'pending',
+        completed_at: null,
+        last_error: null,
+        payload: null,
         attempts,
         last_attempt_at: now
       })
@@ -101,11 +105,49 @@ async function upsertPendingExtensionSync(supabase, row) {
       url: row.url || null,
       reason: row.reason || null,
       context: row.context || null,
+      status: 'pending',
       attempts: 1,
       first_seen_at: now,
       last_attempt_at: now
     });
     if (ins.error) console.warn(`[oc] warning: no pude insertar pending_extension_sync: ${ins.error.message}`);
+  }
+}
+
+async function logScraperHealth(supabase, { tipo_scraper, status, duracion_ms, items_obtenidos, errores, meta } = {}) {
+  if (!supabase) return;
+  const row = {
+    tipo_scraper: String(tipo_scraper || 'oc_api'),
+    status: String(status || 'ok'),
+    duracion_ms: duracion_ms != null ? Number(duracion_ms) : null,
+    items_obtenidos: items_obtenidos != null ? Number(items_obtenidos) : null,
+    errores: errores ? String(errores).slice(0, 2000) : null,
+    meta: meta || null
+  };
+  const ins = await supabase.from('scraper_health_log').insert(row);
+  if (ins.error) console.warn(`[oc] warning: no pude insertar scraper_health_log: ${ins.error.message}`);
+
+  // Alerta si hay 5 fallos consecutivos
+  if (row.status === 'fail') {
+    const last = await supabase
+      .from('scraper_health_log')
+      .select('status,created_at')
+      .eq('tipo_scraper', row.tipo_scraper)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (!last.error) {
+      const statuses = (last.data || []).map((r) => r.status);
+      const allFail = statuses.length === 5 && statuses.every((s) => s === 'fail');
+      if (allFail) {
+        await supabase.from('scraper_health_log').insert({
+          tipo_scraper: row.tipo_scraper,
+          status: 'alert',
+          errores: '5 fallos consecutivos detectados',
+          meta: { window: 'last_5', statuses }
+        });
+        console.warn(`[ALERTA] 5 fallos consecutivos en ${row.tipo_scraper}`);
+      }
+    }
   }
 }
 
@@ -261,6 +303,10 @@ async function main() {
   if (!ticket) throw new Error('Falta MP_API_TICKET');
 
   const runStartedAt = Date.now();
+  let status = 'ok';
+  let errores = null;
+  let itemsObtenidos = 0;
+  let headersObtenidos = 0;
   try {
     const from = env('MP_OC_FROM').trim() || todayYYYYMMDD();
     const to = env('MP_OC_TO').trim() || from;
@@ -386,9 +432,24 @@ async function main() {
       }
     }
 
+    headersObtenidos = headers.length;
+    itemsObtenidos = totalItems;
     console.log(`[oc] upsert headers=${headers.length} refresh items=${totalItems}`);
     console.log(`[oc] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
+  } catch (e) {
+    status = 'fail';
+    errores = String(e?.message || e);
+    throw e;
   } finally {
+    const duracionMs = Date.now() - runStartedAt;
+    await logScraperHealth(supabase, {
+      tipo_scraper: 'oc_api',
+      status,
+      duracion_ms: duracionMs,
+      items_obtenidos: headersObtenidos,
+      errores,
+      meta: { items_lineas: itemsObtenidos, anti_block: getBlockMetricsSnapshot() }
+    });
     await closeFallbackBrowser();
   }
 }
