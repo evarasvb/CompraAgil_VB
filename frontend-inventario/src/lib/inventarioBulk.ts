@@ -46,15 +46,16 @@ function parsePrecio(raw: string): number | null {
 }
 
 export function buildTemplateWorkbook(): XLSX.WorkBook {
+  // Plantilla SIN datos de ejemplo (solo headers + una fila vacía).
   const rows = [
     {
-      SKU: 'SKU-001',
-      Nombre: 'Papel Fotocopia A4 75gr',
-      Descripción: 'Resma 500 hojas tamaño A4, 75 gramos.',
-      Categoría: 'Papelería',
-      Precio: 3990,
-      Unidad: 'resma',
-      Keywords: 'papel,resma,a4,fotocopia'
+      SKU: '',
+      Nombre: '',
+      Descripción: '',
+      Categoría: '',
+      Precio: '',
+      Unidad: '',
+      Keywords: ''
     }
   ];
   const ws = XLSX.utils.json_to_sheet(rows, { header: [...REQUIRED_HEADERS] });

@@ -41,12 +41,12 @@ export function Dashboard() {
       try {
         // Count total (sin traer filas)
         const countResp = await supabase
-          .from('licitaciones')
+          .from('licitaciones_all')
           .select('codigo', { count: 'exact', head: true });
         if (countResp.error) throw countResp.error;
 
         const { data, error } = await supabase
-          .from('licitaciones')
+          .from('licitaciones_all')
           .select(
             'codigo,titulo,organismo,departamento,publicada_el,finaliza_el,presupuesto_estimado,estado,link_detalle,categoria_match,match_score,fecha_extraccion',
           )

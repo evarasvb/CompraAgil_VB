@@ -6,6 +6,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Productos } from './pages/Productos';
 import { Calendario } from './pages/Calendario';
 import { CargaInventario } from './pages/CargaInventario';
+import { Analisis } from './pages/Analisis';
 
 function App() {
   return (
@@ -22,6 +23,9 @@ function App() {
             <NavLink to="/" end style={({ isActive }) => ({ fontWeight: isActive ? 800 : 600 })}>
               Dashboard
             </NavLink>
+            <NavLink to="/analisis" style={({ isActive }) => ({ fontWeight: isActive ? 800 : 600 })}>
+              Análisis
+            </NavLink>
             <NavLink to="/productos" style={({ isActive }) => ({ fontWeight: isActive ? 800 : 600 })}>
               Productos
             </NavLink>
@@ -37,6 +41,7 @@ function App() {
 
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/analisis" element={<Analisis />} />
         <Route path="/productos" element={<Productos />} />
         <Route path="/calendario" element={<Calendario />} />
         <Route path="/carga" element={<CargaInventario />} />
