@@ -562,12 +562,19 @@ async function main() {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
     // Hardening extra: ocultar webdriver y simular plugins/languages
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    } catch (_) {}
+    try {
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    } catch (_) {}
+    try {
+      Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+    } catch (_) {}
     // Algunos sitios esperan window.chrome
-    // eslint-disable-next-line no-undef
-    window.chrome = { runtime: {} };
+    try {
+      window.chrome = window.chrome || { runtime: {} };
+    } catch (_) {}
   });
   await page.setViewport({ width: 1440, height: 900 });
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
@@ -715,11 +722,18 @@ async function main() {
         runDetail(async () => {
           const detailPage = await browser.newPage();
           await detailPage.evaluateOnNewDocument(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
-            // eslint-disable-next-line no-undef
-            window.chrome = { runtime: {} };
+            try {
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            } catch (_) {}
+            try {
+              Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            } catch (_) {}
+            try {
+              Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+            } catch (_) {}
+            try {
+              window.chrome = window.chrome || { runtime: {} };
+            } catch (_) {}
           });
           await detailPage.setViewport({ width: 1440, height: 900 });
           detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
