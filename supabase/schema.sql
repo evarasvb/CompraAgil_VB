@@ -331,3 +331,167 @@ SELECT
 UNION ALL
 SELECT 
   'licitacion_documentos' as tabla, COUNT(*) as registros FROM licitacion_documentos;
+
+-- =====================================================
+-- EXTENSIONES (requeridas para UUID)
+-- =====================================================
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- =====================================================
+-- TABLAS CLIENTE (FirmaVB)
+-- =====================================================
+
+-- Clientes / tenants (1 cliente por empresa)
+CREATE TABLE IF NOT EXISTS clientes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID UNIQUE, -- opcional: vincular a auth.users (Lovable/Supabase Auth)
+  nombre TEXT,
+  rut TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE clientes IS 'Clientes/tenants FirmaVB';
+COMMENT ON COLUMN clientes.user_id IS 'UUID del usuario en auth.users (opcional)';
+
+-- Inventario por cliente (catálogo)
+CREATE TABLE IF NOT EXISTS cliente_inventario (
+  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  sku TEXT NOT NULL,
+  nombre TEXT NOT NULL,
+  descripcion TEXT,
+  categoria TEXT,
+  precio NUMERIC(15,2) DEFAULT 0,
+  unidad TEXT,
+  keywords TEXT,
+  activo BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  PRIMARY KEY (cliente_id, sku)
+);
+
+COMMENT ON TABLE cliente_inventario IS 'Inventario/catálogo por cliente (upsert por sku)';
+
+-- Exclusiones por cliente (no mostrar / no postular)
+CREATE TABLE IF NOT EXISTS cliente_exclusiones (
+  id SERIAL PRIMARY KEY,
+  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (cliente_id, keyword)
+);
+
+-- Notificaciones por cliente
+CREATE TABLE IF NOT EXISTS cliente_notificaciones (
+  id SERIAL PRIMARY KEY,
+  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  enabled BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (cliente_id, email)
+);
+
+-- Ofertas / postulaciones (preparación para postulador automático)
+CREATE TABLE IF NOT EXISTS cliente_ofertas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  licitacion_codigo TEXT NOT NULL REFERENCES licitaciones(codigo) ON DELETE CASCADE,
+  estado TEXT NOT NULL DEFAULT 'pendiente', -- pendiente|en_proceso|enviada|fallida|cancelada
+  motivo TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (cliente_id, licitacion_codigo)
+);
+
+-- =====================================================
+-- ÍNDICES CLIENTE
+-- =====================================================
+CREATE INDEX IF NOT EXISTS idx_cliente_inventario_cliente
+  ON cliente_inventario(cliente_id);
+
+CREATE INDEX IF NOT EXISTS idx_cliente_inventario_sku
+  ON cliente_inventario(sku);
+
+-- =====================================================
+-- TRIGGERS updated_at para tablas cliente
+-- =====================================================
+DROP TRIGGER IF EXISTS update_clientes_updated_at ON clientes;
+CREATE TRIGGER update_clientes_updated_at
+  BEFORE UPDATE ON clientes
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_cliente_inventario_updated_at ON cliente_inventario;
+CREATE TRIGGER update_cliente_inventario_updated_at
+  BEFORE UPDATE ON cliente_inventario
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_cliente_ofertas_updated_at ON cliente_ofertas;
+CREATE TRIGGER update_cliente_ofertas_updated_at
+  BEFORE UPDATE ON cliente_ofertas
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- =====================================================
+-- VISTAS PARA DASHBOARD / CALENDARIO
+-- =====================================================
+
+-- Vista simple para listar todas las licitaciones (sin filtros “últimos 7 días”)
+CREATE OR REPLACE VIEW licitaciones_all AS
+SELECT
+  l.*,
+  COALESCE(l.finaliza_el, l.fecha_cierre_primer_llamado::text) AS cierre_raw
+FROM licitaciones l
+ORDER BY l.created_at DESC;
+
+COMMENT ON VIEW licitaciones_all IS 'Listado completo de licitaciones (para dashboards que deben mostrar TODO)';
+
+-- Eventos calendario (apertura/cierre) usando campos disponibles.
+-- Nota: publicada_el/finaliza_el son strings ISO locales (YYYY-MM-DDTHH:MM:SS). Se castea a timestamp sin zona.
+CREATE OR REPLACE VIEW calendario_eventos AS
+SELECT
+  l.codigo AS licitacion_codigo,
+  l.titulo,
+  'apertura'::text AS tipo,
+  (l.publicada_el)::timestamp AS fecha,
+  l.link_detalle
+FROM licitaciones l
+WHERE l.publicada_el IS NOT NULL AND l.publicada_el <> ''
+UNION ALL
+SELECT
+  l.codigo AS licitacion_codigo,
+  l.titulo,
+  'cierre'::text AS tipo,
+  (l.finaliza_el)::timestamp AS fecha,
+  l.link_detalle
+FROM licitaciones l
+WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
+ORDER BY fecha ASC;
+
+COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para vista calendario en el frontend';
+
+-- =====================================================
+-- RLS (opcional): habilitar cuando se use Supabase Auth en frontend
+-- =====================================================
+-- ALTER TABLE clientes ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE cliente_inventario ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE cliente_exclusiones ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE cliente_notificaciones ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE cliente_ofertas ENABLE ROW LEVEL SECURITY;
+--
+-- -- Políticas sugeridas (requieren user_id en clientes):
+-- -- Clientes: el usuario puede ver/actualizar su cliente
+-- CREATE POLICY "clientes_select_own" ON clientes FOR SELECT
+--   USING (auth.uid() = user_id);
+-- CREATE POLICY "clientes_update_own" ON clientes FOR UPDATE
+--   USING (auth.uid() = user_id);
+--
+-- -- Inventario: el usuario puede ver/editar su inventario vía join a clientes
+-- CREATE POLICY "cliente_inventario_select_own" ON cliente_inventario FOR SELECT
+--   USING (EXISTS (SELECT 1 FROM clientes c WHERE c.id = cliente_inventario.cliente_id AND c.user_id = auth.uid()));
+-- CREATE POLICY "cliente_inventario_upsert_own" ON cliente_inventario FOR INSERT
+--   WITH CHECK (EXISTS (SELECT 1 FROM clientes c WHERE c.id = cliente_inventario.cliente_id AND c.user_id = auth.uid()));
+-- CREATE POLICY "cliente_inventario_update_own" ON cliente_inventario FOR UPDATE
+--   USING (EXISTS (SELECT 1 FROM clientes c WHERE c.id = cliente_inventario.cliente_id AND c.user_id = auth.uid()));
+
