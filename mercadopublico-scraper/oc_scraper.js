@@ -22,11 +22,39 @@ function todayYYYYMMDD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function toIsoDateOnly(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
+function isDDMMAAAA(s) {
+  return /^\d{8}$/.test(String(s || ''));
+}
+
+function parseYYYYMMDDToDate(s) {
+  const m = String(s || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const [, yyyy, mm, dd] = m;
+  const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function formatDDMMAAAA(d) {
   const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(d.getFullYear());
+  return `${dd}${mm}${yyyy}`;
+}
+
+function dateRangeInclusive(fromYYYYMMDD, toYYYYMMDD) {
+  const from = parseYYYYMMDDToDate(fromYYYYMMDD);
+  const to = parseYYYYMMDDToDate(toYYYYMMDD);
+  if (!from || !to) return [];
+  const out = [];
+  const cur = new Date(from.getTime());
+  cur.setHours(0, 0, 0, 0);
+  const end = new Date(to.getTime());
+  end.setHours(0, 0, 0, 0);
+  while (cur.getTime() <= end.getTime()) {
+    out.push(formatDDMMAAAA(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
 }
 
 function parseArgs(argv) {
@@ -40,7 +68,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--from') args.from = argv[++i] || null;
     else if (a === '--to') args.to = argv[++i] || null;
-    else if (a === '--max-pages') args.maxPages = Number.parseInt(argv[++i] || '', 10);
+    else if (a === '--max-pages') args.maxPages = Number.parseInt(argv[++i] || '', 10); // compat (no se usa en endpoints oficiales)
     else if (a === '--dry-run') args.dryRun = true;
   }
   return args;
@@ -89,26 +117,19 @@ function normalizeTimestamp(v) {
   return null;
 }
 
-function buildOcUrl({ endpointTemplate, ticket, from, to, page }) {
-  if (endpointTemplate && endpointTemplate.includes('{')) {
-    return endpointTemplate
-      .replaceAll('{ticket}', encodeURIComponent(ticket || ''))
-      .replaceAll('{from}', encodeURIComponent(from))
-      .replaceAll('{to}', encodeURIComponent(to))
-      .replaceAll('{page}', encodeURIComponent(String(page)));
-  }
+function buildOcListUrl({ fechaDDMMAAAA, ticket }) {
+  // Endpoint oficial: listar por fecha (ddmmaaaa)
+  const u = new URL('https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json');
+  u.searchParams.set('fecha', fechaDDMMAAAA);
+  u.searchParams.set('ticket', ticket);
+  return u.toString();
+}
 
-  // Fallback: URL default (debe ajustarse si tu endpoint real difiere)
-  // Nota: el API de MercadoPúblico suele exponer endpoints JSON bajo /servicios/v1/publico/.
-  const base = endpointTemplate && endpointTemplate.startsWith('http')
-    ? endpointTemplate
-    : 'https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json';
-
-  const u = new URL(base);
-  if (ticket) u.searchParams.set('ticket', ticket);
-  u.searchParams.set('fecha_desde', from);
-  u.searchParams.set('fecha_hasta', to);
-  u.searchParams.set('pagina', String(page));
+function buildOcDetailUrl({ codigoOc, ticket }) {
+  // Endpoint oficial: detalle OC por código
+  const u = new URL('https://api.mercadopublico.cl/servicios/v1/publico/OrdenCompra.json');
+  u.searchParams.set('codigo', codigoOc);
+  u.searchParams.set('ticket', ticket);
   return u.toString();
 }
 
@@ -140,6 +161,8 @@ function extractOcList(payload) {
   // Flexible: payload puede venir como {Listado: [...]}, {Ordenes: [...]}, o array directo.
   if (Array.isArray(payload)) return payload;
   if (payload && Array.isArray(payload.Listado)) return payload.Listado;
+  if (payload && Array.isArray(payload.OrdenesCompra)) return payload.OrdenesCompra;
+  if (payload && Array.isArray(payload.ListaOrdenesCompra)) return payload.ListaOrdenesCompra;
   if (payload && Array.isArray(payload.Ordenes)) return payload.Ordenes;
   if (payload && Array.isArray(payload.data)) return payload.data;
   return [];
@@ -224,40 +247,71 @@ async function main() {
   const args = parseArgs(process.argv);
   const supabase = getSupabaseClient();
 
-  const endpointTemplate = env('MP_OC_ENDPOINT', '').trim();
   const ticket = env('MP_API_TICKET', '').trim();
+  if (!ticket) throw new Error('Falta MP_API_TICKET para consultar la API oficial de órdenes de compra.');
 
-  const from = (args.from || env('MP_OC_FROM', '').trim() || todayYYYYMMDD());
-  const to = (args.to || env('MP_OC_TO', '').trim() || todayYYYYMMDD());
+  const fromRaw = (args.from || env('MP_OC_FROM', '').trim() || todayYYYYMMDD());
+  const toRaw = (args.to || env('MP_OC_TO', '').trim() || todayYYYYMMDD());
 
-  const maxPages = Number.isFinite(args.maxPages) ? args.maxPages : envInt('MP_OC_MAX_PAGES', 10);
+  // Soporta:
+  // - YYYY-MM-DD (recomendado) => se itera rango y se convierte a ddmmaaaa
+  // - ddmmaaaa => se trata como una sola fecha
+  const fechasDDMMAAAA = isDDMMAAAA(fromRaw) && isDDMMAAAA(toRaw)
+    ? dateRangeInclusive(
+        `${fromRaw.slice(4)}-${fromRaw.slice(2, 4)}-${fromRaw.slice(0, 2)}`,
+        `${toRaw.slice(4)}-${toRaw.slice(2, 4)}-${toRaw.slice(0, 2)}`
+      )
+    : isDDMMAAAA(fromRaw) && !toRaw
+      ? [fromRaw]
+      : dateRangeInclusive(fromRaw, toRaw);
 
-  if (!endpointTemplate && !ticket) {
-    throw new Error('Falta MP_OC_ENDPOINT o MP_API_TICKET para consultar el endpoint de órdenes de compra.');
+  if (!fechasDDMMAAAA.length) {
+    throw new Error('Rango de fechas inválido. Usa YYYY-MM-DD (recomendado) o ddmmaaaa.');
   }
 
-  console.log(`[OC] Rango: ${from} -> ${to}. maxPages=${maxPages}. dryRun=${args.dryRun ? 'YES' : 'NO'}`);
+  console.log(`[OC] Fechas: ${fechasDDMMAAAA[0]} -> ${fechasDDMMAAAA[fechasDDMMAAAA.length - 1]} (${fechasDDMMAAAA.length} días). dryRun=${args.dryRun ? 'YES' : 'NO'}`);
 
   const allHeaders = [];
   const itemsByOc = new Map();
 
-  for (let page = 1; page <= maxPages; page++) {
-    const url = buildOcUrl({ endpointTemplate, ticket, from, to, page });
-    console.log(`[OC] Fetch page ${page}: ${url}`);
-
+  // 1) Listar OCs por fecha
+  const ocCodigos = new Set();
+  for (const fecha of fechasDDMMAAAA) {
+    const url = buildOcListUrl({ fechaDDMMAAAA: fecha, ticket });
+    console.log(`[OC] List fecha=${fecha}: ${url}`);
     const payload = await fetchJsonWithRetries(url, { retries: 3, sleepMs: 1400 });
     const list = extractOcList(payload);
-    console.log(`[OC] Page ${page}: ${list.length} registros`);
-    if (!list.length) break;
-
+    console.log(`[OC] fecha=${fecha}: ${list.length} registros`);
     for (const raw of list) {
-      const header = mapOcHeader(raw);
+      const codigo =
+        normalizeText(pickFirst(raw, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden', 'id']));
+      if (codigo) ocCodigos.add(codigo);
+    }
+  }
+
+  console.log(`[OC] Códigos únicos a detallar: ${ocCodigos.size}`);
+
+  // 2) Detalle por OC (cabecera + items)
+  for (const codigoOc of ocCodigos) {
+    const url = buildOcDetailUrl({ codigoOc, ticket });
+    try {
+      const payload = await fetchJsonWithRetries(url, { retries: 3, sleepMs: 1400 });
+
+      // Flexible: a veces viene envuelto
+      const detailObj =
+        (payload && payload.OrdenCompra) ||
+        (payload && Array.isArray(payload.Listado) && payload.Listado[0]) ||
+        payload;
+
+      const header = mapOcHeader(detailObj);
       if (!header) continue;
       allHeaders.push(header);
 
-      const rawItems = extractOcItems(raw);
+      const rawItems = extractOcItems(detailObj);
       const mappedItems = rawItems.map((it) => mapOcItem(it, header.numero_oc)).filter((x) => x.numero_oc);
       itemsByOc.set(header.numero_oc, mappedItems);
+    } catch (e) {
+      console.warn(`[OC] Falló detalle ${codigoOc}: ${String(e?.message || e)}`);
     }
   }
 

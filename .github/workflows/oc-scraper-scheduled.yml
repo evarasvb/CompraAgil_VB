@@ -40,7 +40,6 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
       # Config API OC
-      MP_OC_ENDPOINT: ${{ secrets.MP_OC_ENDPOINT }}
       MP_API_TICKET: ${{ secrets.MP_API_TICKET }}
 
       MP_OC_FROM: ${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}
@@ -70,8 +69,8 @@ jobs:
             echo "::error::Falta el secret SUPABASE_KEY."
             exit 1
           fi
-          if [[ -z "${MP_OC_ENDPOINT:-}" && -z "${MP_API_TICKET:-}" ]]; then
-            echo "::error::Falta MP_OC_ENDPOINT o MP_API_TICKET (secrets)."
+          if [[ -z "${MP_API_TICKET:-}" ]]; then
+            echo "::error::Falta MP_API_TICKET (secret)."
             exit 1
           fi
 
