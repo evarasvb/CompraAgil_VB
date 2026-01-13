@@ -77,24 +77,16 @@ jobs:
           fi
           echo "Secrets OK (no se imprime su contenido)."
 
-              - name: Crear .env con secrets
-      working-directory: mercadopublico-scraper
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
-        echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
-        echo "MAX_PAGES=$MAX_PAGES" >> .env
-        echo ".env creado con $(wc -l < .env) variables."
-
-    - name: Instalar Chromium para Puppeteer
-      shell: bash
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser
-        echo "Chromium instalado: $(chromium-browser --version)"
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SUPABASE_URL=${SUPABASE_URL}" > .env
+          echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
+          echo "MAX_PAGES=$MAX_PAGES" >> .env
+          echo ".env creado con $(wc -l < .env) variables."
 
       - name: Instalar dependencias
         working-directory: mercadopublico-scraper
@@ -104,6 +96,13 @@ jobs:
           node --version
           npm --version
           npm install
+
+      - name: Instalar Chrome para Puppeteer
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx puppeteer browsers install chrome
 
       - name: Ejecutar scraper (incremental)
         working-directory: mercadopublico-scraper
