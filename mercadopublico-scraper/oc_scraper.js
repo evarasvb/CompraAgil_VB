@@ -201,7 +201,7 @@ async function main() {
   const codigos = new Set();
   for (const fecha of fechas) {
     const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket });
-    const payload = await fetchJson(url);
+    const payload = await fetchJsonWithRetry(url, { retries: 5, baseDelayMs: 700 });
     for (const r of extractList(payload)) {
       const codigo = String(pick(r, ['numero_oc', 'NumeroOC', 'Codigo', 'CodigoOrden', 'OrdenCompra', 'NumeroOrden']) || '').trim();
       if (codigo) codigos.add(codigo);
