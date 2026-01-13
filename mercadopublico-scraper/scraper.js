@@ -662,26 +662,27 @@ async function main() {
       }
 
       const nowIso = toIsoNow();
-      const licRows = comprasNuevas.map((c) => ({
-        ...c,
+      const licRows = comprasNuevas.map((c) => {
+        // Agregar matching FirmaVB (por ahora basado en título; los items se procesan después)
+        const matchResult = matchLicitacion({
+          titulo: c.titulo || '',
+          descripcion: '',
+          items: []
+        });
 
-              // Agregar matching FirmaVB
-      const matchResult = matchLicitacion({
-        titulo: c.titulo || '',
-       items: [] // Los items se procesan después
+        return {
+          ...c,
+          categoria: matchResult?.categoria ?? null,
+          categoria_match: matchResult?.categoria_match ?? null,
+          match_score: matchResult?.match_score ?? 0,
+          palabras_encontradas:
+            Array.isArray(matchResult?.palabras_encontradas) && matchResult.palabras_encontradas.length
+              ? JSON.stringify(matchResult.palabras_encontradas)
+              : null,
+          match_encontrado: Boolean(matchResult?.categoria),
+          fecha_extraccion: nowIso
+        };
       });
-      
-      return {
-                ...c,
-                categoria: matchResult.categoria,
-                categoria_match: matchResult.categoria_match,
-                match_score: matchResult.match_score,
-                palabras_encontradas: matchResult.palabras_encontradas ? JSON.stringify(matchResult.palabras_encontradas) : null,
-                match_encontrado: matchResult.categoria ? true : false,
-                fecha_extraccion: nowIso
-                        };
-          }));
-      }));
       if (dryRun) {
         console.log(`[dry-run] Enviaría ${licRows.length} filas a 'licitaciones' (upsert por codigo).`);
       } else {
