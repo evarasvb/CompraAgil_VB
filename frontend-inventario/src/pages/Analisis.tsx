@@ -63,6 +63,7 @@ export function Analisis() {
   const [columns, setColumns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<'institucion' | 'proveedor' | 'productos' | 'precios'>('institucion');
+  const [sourceTable, setSourceTable] = useState<'ordenes_compra' | 'ordenes_compra_items'>('ordenes_compra');
 
   const [map, setMap] = useState<FieldMap>({
     institucion: null,
@@ -82,7 +83,7 @@ export function Analisis() {
       setLoading(true);
       const tId = toast.loading('Cargando órdenes de compra…');
       try {
-        const { data, error } = await supabase.from('ordenes_compra').select('*').limit(limit);
+        const { data, error } = await supabase.from(sourceTable).select('*').limit(limit);
         if (error) throw error;
         if (cancelled) return;
         const arr = (data ?? []) as AnyRow[];
@@ -92,19 +93,68 @@ export function Analisis() {
 
         // Heurísticas (no inventa datos; solo detecta columnas existentes)
         const guessed: FieldMap = {
-          institucion: guessField(cols, ['organismo', 'institucion', 'comprador', 'entidad', 'unidad', 'nombreorganismo']),
-          proveedor: guessField(cols, ['proveedor', 'razonsocial', 'razon_social', 'nombreproveedor', 'rutproveedor', 'rut_proveedor']),
-          monto: guessField(cols, ['monto', 'total', 'monto_total', 'total_neto', 'total_bruto', 'monto_neto', 'monto_bruto']),
-          fecha: guessField(cols, ['fecha', 'created_at', 'emision', 'fecha_emision', 'fecha_creacion']),
+          // OC: “Demandante / Unidad de Compra”
+          institucion: guessField(cols, [
+            'demandante',
+            'organismo',
+            'organismo_comprador',
+            'institucion',
+            'comprador',
+            'entidad',
+            'unidad_compra',
+            'unidaddecompra',
+            'unidad',
+            'nombreorganismo',
+            'nombre_organismo',
+          ]),
+          // OC: “Señor(es) / Proveedor / RUT proveedor”
+          proveedor: guessField(cols, [
+            'proveedor',
+            'proveedor_nombre',
+            'senores',
+            'razonsocial',
+            'razon_social',
+            'nombreproveedor',
+            'rutproveedor',
+            'rut_proveedor',
+          ]),
+          // OC: neto/subtotal/iva/total (preferimos total si existe; si no, neto/subtotal)
+          monto: guessField(cols, [
+            'total',
+            'monto_total',
+            'valor_total',
+            'total_neto',
+            'total_bruto',
+            'monto_neto',
+            'monto_bruto',
+            'subtotal',
+            'neto',
+            'iva',
+          ]),
+          // OC: fecha envío/emisión/creación
+          fecha: guessField(cols, ['fecha_envio_oc', 'fechaenviooc', 'fecha', 'created_at', 'emision', 'fecha_emision', 'fecha_creacion']),
+          // si viene rubro/categoria
           categoria: guessField(cols, ['categoria', 'rubro', 'familia', 'segmento']),
-          producto: guessField(cols, ['producto', 'nombre_producto', 'item', 'descripcion', 'nombre_item']),
-          precioUnitario: guessField(cols, ['precio_unitario', 'precio', 'unitario', 'valor_unitario'])
+          // Detalle: producto/descripcion/especificaciones
+          producto: guessField(cols, [
+            'producto',
+            'nombre_producto',
+            'nombreitem',
+            'nombre_item',
+            'item',
+            'descripcion',
+            'especificaciones',
+            'especificaciones_comprador',
+            'especificaciones_proveedor',
+          ]),
+          // Detalle: precio unitario
+          precioUnitario: guessField(cols, ['precio_unitario', 'preciounitario', 'valor_unitario', 'unitario', 'precio'])
         };
         setMap(guessed);
         toast.success(`Órdenes cargadas: ${arr.length}`, { id: tId });
       } catch (e) {
         if (!cancelled) {
-          toast.error(`Error cargando ordenes_compra: ${String((e as Error)?.message || e)}`, { id: tId });
+          toast.error(`Error cargando ${sourceTable}: ${String((e as Error)?.message || e)}`, { id: tId });
           setRows([]);
           setColumns([]);
         }
@@ -116,7 +166,7 @@ export function Analisis() {
     return () => {
       cancelled = true;
     };
-  }, [limit]);
+  }, [limit, sourceTable]);
 
   const negociosPorInstitucion = useMemo(() => {
     if (!map.institucion || !map.monto) return [];
@@ -274,11 +324,22 @@ export function Analisis() {
         <div>
           <h1 style={{ margin: 0 }}>Módulo de Análisis</h1>
           <p className="muted">
-            Basado en datos reales de <code>ordenes_compra</code>. No genera datos. Si tu tabla usa otros nombres de columnas,
-            ajusta el mapeo aquí.
+            Basado en datos reales de Supabase. No genera datos. Si tu tabla usa otros nombres de columnas, ajusta el mapeo aquí.
           </p>
         </div>
         <div className="actions">
+          <label className="muted">
+            Fuente:
+            <select
+              value={sourceTable}
+              onChange={(e) => setSourceTable(e.target.value as 'ordenes_compra' | 'ordenes_compra_items')}
+              style={{ marginLeft: 8, padding: 8, borderRadius: 8, border: '1px solid #cbd5e1' }}
+              disabled={loading}
+            >
+              <option value="ordenes_compra">ordenes_compra</option>
+              <option value="ordenes_compra_items">ordenes_compra_items</option>
+            </select>
+          </label>
           <label className="muted">
             Límite filas:
             <select
