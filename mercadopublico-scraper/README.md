@@ -15,6 +15,7 @@ El objetivo es **persistir los datos en Supabase** (Postgres) usando `upsert` pa
   - `licitaciones` (cabecera)
   - `licitacion_items` (productos)
   - `licitacion_documentos` (adjuntos, opcional)
+  - `cliente_ofertas` (sugerencias/postulaciones, si habilitas matching/worker)
 
 ### 2) Requisitos
 
@@ -109,8 +110,11 @@ Qué hace:
 
 - **`SUPABASE_URL`**: URL del proyecto Supabase.
 - **`SUPABASE_KEY`**: API key con permisos de lectura/escritura para las tablas (típicamente **service role** en CI).
+- **`SUPABASE_SERVICE_KEY`** *(recomendado)*: key con permisos completos para jobs automáticos (matching/postulación) cuando RLS está habilitado.
 - **`MP_API_TICKET`** *(solo scraper OC)*: Ticket de la API oficial de MercadoPúblico para consultar Órdenes de Compra.
   - Si **no** se configura en GitHub Actions, el workflow de OC **no falla**: emite un warning y **se omite** hasta que el secret exista.
+- **`MP_POSTULACION_ENDPOINT`** *(postulación automática)*: endpoint real que reciba un POST y ejecute la postulación en MercadoPúblico.
+  - Este repo **no inventa** ese endpoint; el worker se puede dejar corriendo y hará **skip** hasta que el secret exista.
 - **`MAX_PAGES`**:
   - `1` (default): procesa 1 página.
   - `N`: procesa N páginas.
@@ -118,6 +122,34 @@ Qué hace:
 - **`INCREMENTAL_MODE`**:
   - `true`: procesa solo compras recientes y evita reprocesar códigos existentes.
   - `false`: procesa según el rango `--from/--to` o el default “hoy”.
+
+### 10) Matching automático (cliente_inventario → cliente_ofertas)
+
+Script: `matching_engine.js`
+
+- Lee `cliente_inventario` (keywords/nombre/sku) por cliente.
+- Compara contra `licitaciones` (+ opcionalmente texto de `licitacion_items`).
+- Inserta sugerencias en `cliente_ofertas` con `estado='sugerida'` y `match_score`.
+
+Ejecutar local:
+
+```bash
+node matching_engine.js --min-score 2 --max-licitaciones 500
+```
+
+Workflow: `.github/workflows/matching-scheduled.yml` (cada 6 horas).
+
+### 11) Postulación automática (preparado)
+
+Script: `postulacion_worker.js`
+
+- Lee `cliente_ofertas` donde `estado='aprobada'`.
+- Envía POST al endpoint configurado en `MP_POSTULACION_ENDPOINT`.
+- Actualiza `estado` a `enviada` o `fallida` y guarda `respuesta_mp`.
+
+> Importante: el endpoint real de postulación depende de tu integración (no es parte de la API pública de lectura). Por eso el worker hace **skip** si no está configurado.
+
+Workflow: `.github/workflows/postulacion-scheduled.yml` (cada hora).
 
 ### 7) Estructura de datos en Supabase (tablas)
 
