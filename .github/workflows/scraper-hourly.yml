@@ -12,8 +12,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: cursor/mercadopublico-agile-scraper-4a12
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -22,26 +20,44 @@ jobs:
           cache: 'npm'
           cache-dependency-path: mercadopublico-scraper/package-lock.json
 
-      - name: Crear .env con secrets
+      - name: Validar secrets requeridos
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          cd mercadopublico-scraper
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_KEY."
+            exit 1
+          fi
+
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SUPABASE_URL=${SUPABASE_URL}" > .env
+          echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
           echo "INCREMENTAL_MODE=true" >> .env
           echo "MAX_PAGES=5" >> .env
           echo ".env creado con $(wc -l < .env) variables."
 
       - name: Instalar dependencias
-        run: |
-          cd mercadopublico-scraper
-          npm install
+        working-directory: mercadopublico-scraper
+        run: npm install
 
       - name: Instalar Chrome para Puppeteer
-        run: |
-          cd mercadopublico-scraper
-          npx puppeteer browsers install chrome
+        working-directory: mercadopublico-scraper
+        run: npx puppeteer browsers install chrome
 
       - name: Ejecutar scraper
-        run: |
-          cd mercadopublico-scraper
-          node scraper.js
+        working-directory: mercadopublico-scraper
+        run: node scraper.js

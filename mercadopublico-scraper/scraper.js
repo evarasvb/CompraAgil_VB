@@ -1,8 +1,12 @@
 require('dotenv').config();
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createClient } = require('@supabase/supabase-js');
 const { matchLicitacion } = require('./matcher_firmavb');
+
+// Mitigar bloqueos anti-bot (CloudFront/WAF) ocultando señales de automatización.
+puppeteer.use(StealthPlugin());
 
 const config = require('./config');
 const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, toIsoNow } = require('./utils');
@@ -547,10 +551,31 @@ async function main() {
 
   const browser = await puppeteer.launch({
     headless: isHeadless ? 'new' : false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage'
+    ]
   });
 
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    // Hardening extra: ocultar webdriver y simular plugins/languages
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    } catch (_) {}
+    try {
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    } catch (_) {}
+    try {
+      Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+    } catch (_) {}
+    // Algunos sitios esperan window.chrome
+    try {
+      window.chrome = window.chrome || { runtime: {} };
+    } catch (_) {}
+  });
   await page.setViewport({ width: 1440, height: 900 });
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
   await page.setUserAgent(
@@ -662,26 +687,27 @@ async function main() {
       }
 
       const nowIso = toIsoNow();
-      const licRows = comprasNuevas.map((c) => ({
-        ...c,
+      const licRows = comprasNuevas.map((c) => {
+        // Agregar matching FirmaVB (por ahora basado en título; los items se procesan después)
+        const matchResult = matchLicitacion({
+          titulo: c.titulo || '',
+          descripcion: '',
+          items: []
+        });
 
-              // Agregar matching FirmaVB
-      const matchResult = matchLicitacion({
-        titulo: c.titulo || '',
-       items: [] // Los items se procesan después
+        return {
+          ...c,
+          categoria: matchResult?.categoria ?? null,
+          categoria_match: matchResult?.categoria_match ?? null,
+          match_score: matchResult?.match_score ?? 0,
+          palabras_encontradas:
+            Array.isArray(matchResult?.palabras_encontradas) && matchResult.palabras_encontradas.length
+              ? JSON.stringify(matchResult.palabras_encontradas)
+              : null,
+          match_encontrado: Boolean(matchResult?.categoria),
+          fecha_extraccion: nowIso
+        };
       });
-      
-      return {
-                ...c,
-                categoria: matchResult.categoria,
-                categoria_match: matchResult.categoria_match,
-                match_score: matchResult.match_score,
-                palabras_encontradas: matchResult.palabras_encontradas ? JSON.stringify(matchResult.palabras_encontradas) : null,
-                match_encontrado: matchResult.categoria ? true : false,
-                fecha_extraccion: nowIso
-                        };
-          }));
-      }));
       if (dryRun) {
         console.log(`[dry-run] Enviaría ${licRows.length} filas a 'licitaciones' (upsert por codigo).`);
       } else {
@@ -695,6 +721,20 @@ async function main() {
       const detailTasks = comprasNuevas.map((compra) =>
         runDetail(async () => {
           const detailPage = await browser.newPage();
+          await detailPage.evaluateOnNewDocument(() => {
+            try {
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            } catch (_) {}
+            try {
+              Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            } catch (_) {}
+            try {
+              Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+            } catch (_) {}
+            try {
+              window.chrome = window.chrome || { runtime: {} };
+            } catch (_) {}
+          });
           await detailPage.setViewport({ width: 1440, height: 900 });
           detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
           await detailPage.setUserAgent(

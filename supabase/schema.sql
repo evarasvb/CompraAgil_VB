@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS licitaciones (
   estado TEXT,
   estado_detallado TEXT,
   
+  -- Fechas (compatibilidad con el scraper actual)
+  -- Nota: el scraper guarda strings ISO locales (sin zona) en `publicada_el/finaliza_el`.
+  -- Si prefieres tipos timestamp, cambia a TIMESTAMP y ajusta el scraper para incluir zona.
+  publicada_el TEXT,
+  finaliza_el TEXT,
+
   -- Organización Compradora
   organismo TEXT,
   rut_institucion TEXT,
@@ -37,6 +43,12 @@ CREATE TABLE IF NOT EXISTS licitaciones (
   
   -- Enlaces
   link_detalle TEXT,
+
+  -- Matching / categorización (FirmaVB)
+  categoria TEXT,
+  categoria_match TEXT,
+  match_score NUMERIC(10,2),
+  palabras_encontradas JSONB,
   
   -- Documentos
   tiene_adjuntos BOOLEAN DEFAULT FALSE,
@@ -58,6 +70,12 @@ COMMENT ON COLUMN licitaciones.codigo IS 'Código único de la licitación en Me
 COMMENT ON COLUMN licitaciones.procesada IS 'Indica si ya se procesó para matching con inventario';
 COMMENT ON COLUMN licitaciones.match_encontrado IS 'TRUE si se encontró al menos un producto en inventario';
 COMMENT ON COLUMN licitaciones.oferta_enviada IS 'TRUE si ya se envió oferta a MercadoPúblico';
+COMMENT ON COLUMN licitaciones.publicada_el IS 'Fecha/hora de publicación (string ISO local) extraída del listado compra-agil';
+COMMENT ON COLUMN licitaciones.finaliza_el IS 'Fecha/hora de cierre (string ISO local) extraída del listado compra-agil';
+COMMENT ON COLUMN licitaciones.categoria IS 'Categoría interna calculada por matcher (ej: articulos_oficina, aseo, etc.)';
+COMMENT ON COLUMN licitaciones.categoria_match IS 'Label legible de la categoría (para UI)';
+COMMENT ON COLUMN licitaciones.match_score IS 'Score del matcher (dependiente de heurísticas / keywords)';
+COMMENT ON COLUMN licitaciones.palabras_encontradas IS 'JSON con palabras/keywords que gatillaron el match';
 
 -- =====================================================
 -- TABLA: LICITACION_ITEMS
