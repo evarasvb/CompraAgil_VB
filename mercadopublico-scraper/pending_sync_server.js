@@ -130,8 +130,10 @@ async function main() {
   });
 }
 
-main().catch((e) => {
-  console.error('[pending-sync] fatal:', e);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('[pending-sync] fatal:', e);
+    process.exitCode = 1;
+  });
+}
 
