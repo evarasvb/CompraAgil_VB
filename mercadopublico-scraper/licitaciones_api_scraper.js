@@ -7,7 +7,8 @@ const {
   fetchJsonResilient,
   createStealthBrowser,
   fetchJsonViaPuppeteer,
-  isRetryableForFallback
+  isRetryableForFallback,
+  getBlockMetricsSnapshot
 } = require('./anti_block');
 
 function env(name, fallback = '') {
@@ -111,11 +112,15 @@ async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pend
   let browser = fetchJsonWithFallback._browser || null;
 
   try {
-    return await fetchJsonResilient(url, { context });
+    // Importante: modo "rápido" para fallback (no quemar 5*min antes de ir a Puppeteer)
+    return await fetchJsonResilient(url, { context, maxAttempts: 1 });
   } catch (e) {
     if (!isRetryableForFallback(e)) throw e;
 
-    console.warn(`[lic-api] fallback a Puppeteer por error API: ${String(e?.message || e)}`);
+    const status = e?.meta?.status;
+    console.warn(
+      `[FALLBACK] API falló${status ? ` con ${status}` : ''}, cambiando a Puppeteer... (${String(e?.message || e)})`
+    );
     try {
       if (!browser) {
         browser = await createStealthBrowser({ headless: true });
@@ -123,7 +128,7 @@ async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pend
       }
       return await fetchJsonViaPuppeteer(browser, url, { context });
     } catch (e2) {
-      console.warn(`[lic-api] fallback a extensión (API+Puppeteer fallaron): ${String(e2?.message || e2)}`);
+      console.warn(`[FALLBACK] API+Puppeteer fallaron, enviando a pending_extension_sync... (${String(e2?.message || e2)})`);
       if (supabase && pendingKind && pendingIdentifier) {
         await upsertPendingExtensionSync(supabase, {
           kind: pendingKind,
@@ -274,30 +279,62 @@ async function main() {
 
     console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
 
-    // Cache inteligente: si ya existe y fue scrapeado hace <1h, saltar detalle.
-    const freshnessMs = 60 * 60 * 1000;
+    // Cache inteligente: si ya existe y fue scrapeado hace <30min, saltar detalle.
+    // No re-scrapear licitaciones cerradas.
+    // Si está viejo, marcar como "stale" y NO re-scrapear inmediatamente (ver schema).
+    const freshnessMs = 30 * 60 * 1000;
     const cutoffMs = Date.now() - freshnessMs;
     const codigosArr = Array.from(codigos);
     const fresh = new Set();
+    const closed = new Set();
+    const staleCandidates = [];
     for (let i = 0; i < codigosArr.length; i += 200) {
       const batch = codigosArr.slice(i, i + 200);
       const { data, error } = await supabase
         .from('licitaciones_api')
-        .select('codigo,last_scraped_at')
+        .select('codigo,last_scraped_at,fecha_cierre,stale,stale_marked_at')
         .in('codigo', batch);
       if (error) {
         console.warn(`[lic-api] warning: no pude consultar cache (licitaciones_api): ${error.message}`);
         break;
       }
       for (const row of data || []) {
+        const cierreMs = row?.fecha_cierre ? new Date(row.fecha_cierre).getTime() : NaN;
+        if (Number.isFinite(cierreMs) && cierreMs < Date.now()) {
+          closed.add(row.codigo);
+          continue;
+        }
         const t = row?.last_scraped_at ? new Date(row.last_scraped_at).getTime() : NaN;
-        if (Number.isFinite(t) && t >= cutoffMs) fresh.add(row.codigo);
+        if (Number.isFinite(t) && t >= cutoffMs) {
+          fresh.add(row.codigo);
+          continue;
+        }
+        if (row?.codigo) staleCandidates.push(row);
       }
     }
 
     const rows = [];
     for (const codigo of codigos) {
       if (fresh.has(codigo)) continue;
+      if (closed.has(codigo)) continue;
+
+      const staleRow = staleCandidates.find((r) => r.codigo === codigo);
+      if (staleRow) {
+        const staleMarkedAt = staleRow?.stale_marked_at ? new Date(staleRow.stale_marked_at).getTime() : NaN;
+        const rescrapeAfterMs = Number(env('STALE_RESCRAPE_AFTER_MIN', '60')) * 60 * 1000;
+        const isStale = Boolean(staleRow?.stale);
+        const canRescrape = isStale && Number.isFinite(staleMarkedAt) && Date.now() - staleMarkedAt >= rescrapeAfterMs;
+        if (!canRescrape) {
+          if (!isStale) {
+            const upd = await supabase
+              .from('licitaciones_api')
+              .update({ stale: true, stale_marked_at: new Date().toISOString() })
+              .eq('codigo', codigo);
+            if (upd.error) console.warn(`[lic-api] warning: no pude marcar stale ${codigo}: ${upd.error.message}`);
+          }
+          continue;
+        }
+      }
       try {
         const url = buildDetailUrl({ codigo, ticket });
         const payload = await fetchJsonWithFallback(url, {
@@ -322,6 +359,7 @@ async function main() {
     }
 
     console.log(`[lic-api] upsert filas=${rows.length}`);
+    console.log(`[lic-api] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
   } finally {
     await closeFallbackBrowser();
   }

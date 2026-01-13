@@ -2,7 +2,7 @@ name: Scraper Licitaciones (API MercadoPúblico)
 
 on:
   schedule:
-    - cron: "10 * * * *" # cada hora, minuto 10 (UTC)
+    - cron: "10 */4 * * *" # cada 4 horas, minuto 10 (UTC)
   workflow_dispatch:
     inputs:
       from:
@@ -79,5 +79,22 @@ jobs:
       - name: Ejecutar scraper Licitaciones API
         if: steps.validate.outputs.skip != 'true'
         working-directory: mercadopublico-scraper
-        run: node licitaciones_api_scraper.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Retry con backoff exponencial (workflow-level)
+          max=3
+          for i in $(seq 1 $max); do
+            echo "Intento $i/$max: node licitaciones_api_scraper.js"
+            if node licitaciones_api_scraper.js; then
+              exit 0
+            fi
+            if [[ "$i" -lt "$max" ]]; then
+              sleep_s=$((30 * (2 ** (i-1))))
+              echo "Fallo intento $i. Esperando ${sleep_s}s..."
+              sleep "$sleep_s"
+            fi
+          done
+          echo "::error::Scraper Licitaciones API falló $max veces seguidas."
+          exit 1
 

@@ -7,7 +7,8 @@ const {
   fetchJsonResilient,
   createStealthBrowser,
   fetchJsonViaPuppeteer,
-  isRetryableForFallback
+  isRetryableForFallback,
+  getBlockMetricsSnapshot
 } = require('./anti_block');
 
 function env(name, fallback = '') {
@@ -112,11 +113,15 @@ async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pend
   let browser = fetchJsonWithFallback._browser || null;
 
   try {
-    return await fetchJsonResilient(url, { context });
+    // Importante: modo "rápido" para fallback (no quemar 5*min antes de ir a Puppeteer)
+    return await fetchJsonResilient(url, { context, maxAttempts: 1 });
   } catch (e) {
     if (!isRetryableForFallback(e)) throw e;
 
-    console.warn(`[oc] fallback a Puppeteer por error API: ${String(e?.message || e)}`);
+    const status = e?.meta?.status;
+    console.warn(
+      `[FALLBACK] API falló${status ? ` con ${status}` : ''}, cambiando a Puppeteer... (${String(e?.message || e)})`
+    );
     try {
       if (!browser) {
         browser = await createStealthBrowser({ headless: true });
@@ -124,7 +129,7 @@ async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pend
       }
       return await fetchJsonViaPuppeteer(browser, url, { context });
     } catch (e2) {
-      console.warn(`[oc] fallback a extensión (API+Puppeteer fallaron): ${String(e2?.message || e2)}`);
+      console.warn(`[FALLBACK] API+Puppeteer fallaron, enviando a pending_extension_sync... (${String(e2?.message || e2)})`);
       if (supabase && pendingKind && pendingIdentifier) {
         await upsertPendingExtensionSync(supabase, {
           kind: pendingKind,
@@ -255,6 +260,7 @@ async function main() {
   const ticket = env('MP_API_TICKET').trim();
   if (!ticket) throw new Error('Falta MP_API_TICKET');
 
+  const runStartedAt = Date.now();
   try {
     const from = env('MP_OC_FROM').trim() || todayYYYYMMDD();
     const to = env('MP_OC_TO').trim() || from;
@@ -291,16 +297,18 @@ async function main() {
 
     console.log(`[oc] codigos únicos: ${codigos.size} (${from}..${to})`);
 
-    // Cache inteligente: si ya existe y fue scrapeado hace <1h, saltar detalle.
-    const freshnessMs = 60 * 60 * 1000;
+    // Cache inteligente: si ya existe y fue scrapeado hace <30min, saltar detalle.
+    // Si está viejo, marcar como "stale" y NO re-scrapear inmediatamente (ver schema).
+    const freshnessMs = 30 * 60 * 1000;
     const cutoffMs = Date.now() - freshnessMs;
     const codigosArr = Array.from(codigos);
     const fresh = new Set();
+    const staleCandidates = [];
     for (let i = 0; i < codigosArr.length; i += 200) {
       const batch = codigosArr.slice(i, i + 200);
       const { data, error } = await supabase
         .from('ordenes_compra')
-        .select('numero_oc,last_scraped_at')
+        .select('numero_oc,last_scraped_at,stale,stale_marked_at')
         .in('numero_oc', batch);
       if (error) {
         console.warn(`[oc] warning: no pude consultar cache (ordenes_compra): ${error.message}`);
@@ -308,7 +316,13 @@ async function main() {
       }
       for (const row of data || []) {
         const t = row?.last_scraped_at ? new Date(row.last_scraped_at).getTime() : NaN;
-        if (Number.isFinite(t) && t >= cutoffMs) fresh.add(row.numero_oc);
+        if (Number.isFinite(t) && t >= cutoffMs) {
+          fresh.add(row.numero_oc);
+          continue;
+        }
+        // si está viejo, lo marcamos stale (y lo saltamos en esta corrida) salvo que ya lleve
+        // suficiente tiempo stale para reintentar.
+        if (row?.numero_oc) staleCandidates.push(row);
       }
     }
 
@@ -317,6 +331,25 @@ async function main() {
 
     for (const codigoOc of codigos) {
       if (fresh.has(codigoOc)) continue;
+
+      const staleRow = staleCandidates.find((r) => r.numero_oc === codigoOc);
+      if (staleRow) {
+        const staleMarkedAt = staleRow?.stale_marked_at ? new Date(staleRow.stale_marked_at).getTime() : NaN;
+        const rescrapeAfterMs = Number(env('STALE_RESCRAPE_AFTER_MIN', '60')) * 60 * 1000;
+        const isStale = Boolean(staleRow?.stale);
+        const canRescrape = isStale && Number.isFinite(staleMarkedAt) && Date.now() - staleMarkedAt >= rescrapeAfterMs;
+        if (!canRescrape) {
+          if (!isStale) {
+            const upd = await supabase
+              .from('ordenes_compra')
+              .update({ stale: true, stale_marked_at: new Date().toISOString() })
+              .eq('numero_oc', codigoOc);
+            if (upd.error) console.warn(`[oc] warning: no pude marcar stale ${codigoOc}: ${upd.error.message}`);
+          }
+          continue;
+        }
+      }
+
       const url = buildDetailUrl({ codigoOc, ticket });
       try {
         const payload = await fetchJsonWithFallback(url, {
@@ -354,6 +387,7 @@ async function main() {
     }
 
     console.log(`[oc] upsert headers=${headers.length} refresh items=${totalItems}`);
+    console.log(`[oc] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
   } finally {
     await closeFallbackBrowser();
   }

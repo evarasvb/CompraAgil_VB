@@ -351,7 +351,10 @@ CREATE TABLE IF NOT EXISTS licitaciones_api (
   raw_json JSONB,
   created_at TIMESTAMP DEFAULT NOW(),
   -- Para cache inteligente (si fue scrapeado recientemente, skip)
-  last_scraped_at TIMESTAMP WITH TIME ZONE
+  last_scraped_at TIMESTAMP WITH TIME ZONE,
+  -- Para cache agresivo: marcar "stale" y reintentar en otra pasada
+  stale BOOLEAN NOT NULL DEFAULT FALSE,
+  stale_marked_at TIMESTAMP WITH TIME ZONE
 );
 
 COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas por API (no incluye Compras Ágiles)';
@@ -359,6 +362,10 @@ COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas por API
 -- Compatibilidad: si la tabla ya existía antes del cambio
 ALTER TABLE licitaciones_api
   ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE licitaciones_api
+  ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE licitaciones_api
+  ADD COLUMN IF NOT EXISTS stale_marked_at TIMESTAMP WITH TIME ZONE;
 
 -- =====================================================
 -- ÓRDENES DE COMPRA (OC) - HISTÓRICO PARA BI
@@ -382,7 +389,10 @@ CREATE TABLE IF NOT EXISTS ordenes_compra (
   raw_json JSONB,
   created_at TIMESTAMP DEFAULT NOW(),
   -- Para cache inteligente (si fue scrapeado recientemente, skip)
-  last_scraped_at TIMESTAMP WITH TIME ZONE
+  last_scraped_at TIMESTAMP WITH TIME ZONE,
+  -- Para cache agresivo: marcar "stale" y reintentar en otra pasada
+  stale BOOLEAN NOT NULL DEFAULT FALSE,
+  stale_marked_at TIMESTAMP WITH TIME ZONE
 );
 
 COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis histórico';
@@ -390,6 +400,10 @@ COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis
 -- Compatibilidad: si la tabla ya existía antes del cambio
 ALTER TABLE ordenes_compra
   ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE ordenes_compra
+  ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ordenes_compra
+  ADD COLUMN IF NOT EXISTS stale_marked_at TIMESTAMP WITH TIME ZONE;
 
 -- Ítems/líneas OC
 CREATE TABLE IF NOT EXISTS ordenes_compra_items (
@@ -438,6 +452,10 @@ CREATE TABLE IF NOT EXISTS pending_extension_sync (
   attempts INTEGER NOT NULL DEFAULT 0,
   first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   last_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'pending', -- pending|done|failed
+  completed_at TIMESTAMP WITH TIME ZONE,
+  last_error TEXT,
+  payload JSONB,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
   UNIQUE(kind, identifier)
@@ -447,9 +465,30 @@ COMMENT ON TABLE pending_extension_sync IS 'Cola de registros a recuperar vía e
 COMMENT ON COLUMN pending_extension_sync.kind IS 'Tipo de tarea: oc_detail/lic_detail/etc.';
 COMMENT ON COLUMN pending_extension_sync.identifier IS 'Clave del registro a sincronizar (codigo/numero_oc/fecha).';
 COMMENT ON COLUMN pending_extension_sync.attempts IS 'Cantidad de veces que se intentó (API/Puppeteer) antes de dejar pendiente.';
+COMMENT ON COLUMN pending_extension_sync.status IS 'Estado de la tarea para la extensión: pending/done/failed.';
+COMMENT ON COLUMN pending_extension_sync.completed_at IS 'Timestamp cuando la tarea quedó completada.';
 
 CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_kind ON pending_extension_sync(kind);
 CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_last_attempt ON pending_extension_sync(last_attempt_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_status ON pending_extension_sync(status);
+
+-- =====================================================
+-- MONITOREO: HEALTH LOG DE SCRAPERS
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS scraper_health_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  tipo_scraper TEXT NOT NULL, -- oc_api, lic_api, compra_agil, etc.
+  status TEXT NOT NULL, -- ok|fail|alert
+  duracion_ms INTEGER,
+  items_obtenidos INTEGER,
+  errores TEXT,
+  meta JSONB
+);
+
+COMMENT ON TABLE scraper_health_log IS 'Log de salud de scrapers (status, duración, items, errores) para monitoreo y alertas.';
+CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
 
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
