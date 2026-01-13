@@ -1,0 +1,45 @@
+name: Postulación automática (cada hora)
+
+on:
+  schedule:
+    - cron: "30 * * * *" # cada hora, minuto 30 (UTC)
+  workflow_dispatch: {}
+
+concurrency:
+  group: postulacion-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      MP_API_TICKET: ${{ secrets.MP_API_TICKET }}
+      MP_POSTULACION_ENDPOINT: ${{ secrets.MP_POSTULACION_ENDPOINT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: mercadopublico-scraper
+        run: npm install
+
+      - name: Ejecutar worker de postulación
+        working-directory: mercadopublico-scraper
+        run: node postulacion_worker.js
+
