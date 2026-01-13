@@ -120,10 +120,15 @@ CREATE TABLE IF NOT EXISTS licitaciones_api (
   link_detalle TEXT,
   presupuesto_estimado NUMERIC(15,2),
   tipo_proceso TEXT DEFAULT 'licitacion',
+  raw_json JSONB,
   created_at TIMESTAMP DEFAULT NOW()
 );
 
 COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas desde API MercadoPúblico';
+
+-- Migración segura: si la tabla ya existía sin raw_json
+ALTER TABLE IF EXISTS licitaciones_api
+  ADD COLUMN IF NOT EXISTS raw_json JSONB;
 
 -- =====================================================
 -- TABLA: LICITACION_ITEMS
