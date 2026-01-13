@@ -472,6 +472,48 @@ ORDER BY fecha ASC;
 COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para vista calendario en el frontend';
 
 -- =====================================================
+-- ÓRDENES DE COMPRA (OC) - HISTÓRICO PARA BI
+-- =====================================================
+
+-- Cabecera OC
+CREATE TABLE IF NOT EXISTS ordenes_compra (
+  numero_oc TEXT PRIMARY KEY,
+  numero_licitacion TEXT,
+  demandante TEXT,
+  rut_demandante TEXT,
+  unidad_compra TEXT,
+  fecha_envio_oc TIMESTAMP,
+  estado TEXT,
+  proveedor TEXT,
+  rut_proveedor TEXT,
+  neto NUMERIC,
+  iva NUMERIC,
+  total NUMERIC,
+  subtotal NUMERIC,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis histórico';
+
+-- Ítems/líneas OC
+CREATE TABLE IF NOT EXISTS ordenes_compra_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero_oc TEXT REFERENCES ordenes_compra(numero_oc) ON DELETE CASCADE,
+  codigo_producto TEXT,
+  producto TEXT,
+  cantidad NUMERIC,
+  unidad TEXT,
+  precio_unitario NUMERIC,
+  descuento NUMERIC,
+  cargos NUMERIC,
+  valor_total NUMERIC,
+  especificaciones TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE ordenes_compra_items IS 'Detalle/líneas de órdenes de compra (para BI y análisis de precios)';
+
+-- =====================================================
 -- RLS (opcional): habilitar cuando se use Supabase Auth en frontend
 -- =====================================================
 -- ALTER TABLE clientes ENABLE ROW LEVEL SECURITY;
