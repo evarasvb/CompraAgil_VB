@@ -349,10 +349,16 @@ CREATE TABLE IF NOT EXISTS licitaciones_api (
   link_detalle TEXT,
   presupuesto_estimado NUMERIC(15,2),
   raw_json JSONB,
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  -- Para cache inteligente (si fue scrapeado recientemente, skip)
+  last_scraped_at TIMESTAMP WITH TIME ZONE
 );
 
 COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas por API (no incluye Compras Ágiles)';
+
+-- Compatibilidad: si la tabla ya existía antes del cambio
+ALTER TABLE licitaciones_api
+  ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMP WITH TIME ZONE;
 
 -- =====================================================
 -- ÓRDENES DE COMPRA (OC) - HISTÓRICO PARA BI
@@ -374,10 +380,16 @@ CREATE TABLE IF NOT EXISTS ordenes_compra (
   total NUMERIC,
   subtotal NUMERIC,
   raw_json JSONB,
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  -- Para cache inteligente (si fue scrapeado recientemente, skip)
+  last_scraped_at TIMESTAMP WITH TIME ZONE
 );
 
 COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis histórico';
+
+-- Compatibilidad: si la tabla ya existía antes del cambio
+ALTER TABLE ordenes_compra
+  ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMP WITH TIME ZONE;
 
 -- Ítems/líneas OC
 CREATE TABLE IF NOT EXISTS ordenes_compra_items (
@@ -405,6 +417,39 @@ CREATE INDEX IF NOT EXISTS idx_oc_proveedor ON ordenes_compra(proveedor);
 CREATE INDEX IF NOT EXISTS idx_oc_numero_licitacion ON ordenes_compra(numero_licitacion);
 CREATE INDEX IF NOT EXISTS idx_oc_items_numero_oc ON ordenes_compra_items(numero_oc);
 CREATE INDEX IF NOT EXISTS idx_oc_items_producto ON ordenes_compra_items(producto);
+
+-- Índices para cache/operación
+CREATE INDEX IF NOT EXISTS idx_licitaciones_api_last_scraped_at ON licitaciones_api(last_scraped_at DESC);
+CREATE INDEX IF NOT EXISTS idx_oc_last_scraped_at ON ordenes_compra(last_scraped_at DESC);
+
+-- =====================================================
+-- PENDIENTE SYNC DESDE EXTENSIÓN CHROME (ANTI-BLOQUEO)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS pending_extension_sync (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- tipo de tarea: lic_detail, lic_list, oc_detail, oc_list, etc.
+  kind TEXT NOT NULL,
+  -- identificador natural (ej: codigo licitación, numero OC, fecha)
+  identifier TEXT NOT NULL,
+  url TEXT,
+  reason TEXT,
+  context JSONB,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  last_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+  UNIQUE(kind, identifier)
+);
+
+COMMENT ON TABLE pending_extension_sync IS 'Cola de registros a recuperar vía extensión Chrome cuando API/Puppeteer son bloqueados.';
+COMMENT ON COLUMN pending_extension_sync.kind IS 'Tipo de tarea: oc_detail/lic_detail/etc.';
+COMMENT ON COLUMN pending_extension_sync.identifier IS 'Clave del registro a sincronizar (codigo/numero_oc/fecha).';
+COMMENT ON COLUMN pending_extension_sync.attempts IS 'Cantidad de veces que se intentó (API/Puppeteer) antes de dejar pendiente.';
+
+CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_kind ON pending_extension_sync(kind);
+CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_last_attempt ON pending_extension_sync(last_attempt_at DESC);
 
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)

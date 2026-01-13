@@ -1,6 +1,14 @@
 require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
+const config = require('./config');
+const { sleepRandomWithJitter, toIsoNow } = require('./utils');
+const {
+  fetchJsonResilient,
+  createStealthBrowser,
+  fetchJsonViaPuppeteer,
+  isRetryableForFallback
+} = require('./anti_block');
 
 function env(name, fallback = '') {
   const v = process.env[name];
@@ -53,11 +61,91 @@ function getSupabaseClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CompraAgil_VB/licitaciones-api' } });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
-  return JSON.parse(text);
+async function upsertPendingExtensionSync(supabase, row) {
+  const now = new Date().toISOString();
+  const kind = String(row.kind || '').trim();
+  const identifier = String(row.identifier || '').trim();
+  if (!kind || !identifier) return;
+
+  const existing = await supabase
+    .from('pending_extension_sync')
+    .select('id, attempts')
+    .eq('kind', kind)
+    .eq('identifier', identifier)
+    .maybeSingle();
+
+  if (existing.error) {
+    console.warn(`[lic-api] warning: no pude consultar pending_extension_sync (${kind}/${identifier}): ${existing.error.message}`);
+    return;
+  }
+
+  if (existing.data?.id) {
+    const attempts = Number(existing.data.attempts || 0) + 1;
+    const upd = await supabase
+      .from('pending_extension_sync')
+      .update({
+        url: row.url || null,
+        reason: row.reason || null,
+        context: row.context || null,
+        attempts,
+        last_attempt_at: now
+      })
+      .eq('id', existing.data.id);
+    if (upd.error) console.warn(`[lic-api] warning: no pude actualizar pending_extension_sync: ${upd.error.message}`);
+  } else {
+    const ins = await supabase.from('pending_extension_sync').insert({
+      kind,
+      identifier,
+      url: row.url || null,
+      reason: row.reason || null,
+      context: row.context || null,
+      attempts: 1,
+      first_seen_at: now,
+      last_attempt_at: now
+    });
+    if (ins.error) console.warn(`[lic-api] warning: no pude insertar pending_extension_sync: ${ins.error.message}`);
+  }
+}
+
+async function fetchJsonWithFallback(url, { context, supabase, pendingKind, pendingIdentifier } = {}) {
+  let browser = fetchJsonWithFallback._browser || null;
+
+  try {
+    return await fetchJsonResilient(url, { context });
+  } catch (e) {
+    if (!isRetryableForFallback(e)) throw e;
+
+    console.warn(`[lic-api] fallback a Puppeteer por error API: ${String(e?.message || e)}`);
+    try {
+      if (!browser) {
+        browser = await createStealthBrowser({ headless: true });
+        fetchJsonWithFallback._browser = browser;
+      }
+      return await fetchJsonViaPuppeteer(browser, url, { context });
+    } catch (e2) {
+      console.warn(`[lic-api] fallback a extensión (API+Puppeteer fallaron): ${String(e2?.message || e2)}`);
+      if (supabase && pendingKind && pendingIdentifier) {
+        await upsertPendingExtensionSync(supabase, {
+          kind: pendingKind,
+          identifier: pendingIdentifier,
+          url,
+          reason: String(e2?.message || e2).slice(0, 500),
+          context: context || null
+        });
+      }
+      throw e2;
+    }
+  }
+}
+
+async function closeFallbackBrowser() {
+  const browser = fetchJsonWithFallback._browser;
+  fetchJsonWithFallback._browser = null;
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (_) {}
+  }
 }
 
 function buildListUrl({ fechaDDMMAAAA, ticket, estado }) {
@@ -140,7 +228,8 @@ function mapApiRowToMinimal(raw, detailMaybe) {
     fecha_cierre,
     link_detalle: link_detalle ? String(link_detalle) : null,
     presupuesto_estimado,
-    raw_json: d
+    raw_json: d,
+    last_scraped_at: toIsoNow()
   };
 }
 
@@ -149,46 +238,93 @@ async function main() {
   const ticket = env('MP_API_TICKET').trim();
   if (!ticket) throw new Error('Falta MP_API_TICKET');
 
-  const from = env('MP_LIC_FROM').trim() || todayYYYYMMDD();
-  const to = env('MP_LIC_TO').trim() || from;
-  const estado = env('MP_LIC_ESTADO').trim() || '';
-  const fechas = dateRangeDDMMAAAA(from, to);
-  if (!fechas.length) throw new Error('Rango inválido. Usa MP_LIC_FROM/MP_LIC_TO en formato YYYY-MM-DD');
+  try {
+    const from = env('MP_LIC_FROM').trim() || todayYYYYMMDD();
+    const to = env('MP_LIC_TO').trim() || from;
+    const estado = env('MP_LIC_ESTADO').trim() || '';
+    const fechas = dateRangeDDMMAAAA(from, to);
+    if (!fechas.length) throw new Error('Rango inválido. Usa MP_LIC_FROM/MP_LIC_TO en formato YYYY-MM-DD');
 
-  const codigos = new Set();
-  for (const fecha of fechas) {
-    const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket, estado });
-    const payload = await fetchJson(url);
-    const listado = extractListado(payload);
-    for (const r of listado) {
-      const codigo = String(pick(r, ['CodigoExterno', 'codigo', 'Codigo', 'CodigoLicitacion']) || '').trim();
-      if (codigo) codigos.add(codigo);
+    const codigos = new Set();
+    for (const fecha of fechas) {
+      const url = buildListUrl({ fechaDDMMAAAA: fecha, ticket, estado });
+      try {
+        const payload = await fetchJsonWithFallback(url, {
+          context: { phase: 'lic_list', fecha, estado },
+          supabase,
+          pendingKind: 'lic_list',
+          pendingIdentifier: `${fecha}|${estado || ''}`.slice(0, 200)
+        });
+        const listado = extractListado(payload);
+        for (const r of listado) {
+          const codigo = String(pick(r, ['CodigoExterno', 'codigo', 'Codigo', 'CodigoLicitacion']) || '').trim();
+          if (codigo) codigos.add(codigo);
+        }
+      } catch (e) {
+        console.warn(`[lic-api] falló listado fecha=${fecha}: ${String(e?.message || e)}`);
+      }
+
+      // Entre “páginas” (fechas): 5–15s con jitter
+      await sleepRandomWithJitter(
+        config.antiBlock.pageDelayMs.min,
+        config.antiBlock.pageDelayMs.max,
+        config.antiBlock.jitterPct
+      );
     }
-  }
 
-  console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
+    console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
 
-  const rows = [];
-  for (const codigo of codigos) {
-    try {
-      const url = buildDetailUrl({ codigo, ticket });
-      const payload = await fetchJson(url);
-      // Muchos responses incluyen Listado/Licitacion; tomamos el primer objeto de detalle.
-      const list = extractListado(payload);
-      const detail = list && list.length ? list[0] : payload;
-      const mapped = mapApiRowToMinimal({}, detail);
-      if (mapped) rows.push(mapped);
-    } catch (e) {
-      console.warn(`[lic-api] falló detalle ${codigo}: ${String(e?.message || e)}`);
+    // Cache inteligente: si ya existe y fue scrapeado hace <1h, saltar detalle.
+    const freshnessMs = 60 * 60 * 1000;
+    const cutoffMs = Date.now() - freshnessMs;
+    const codigosArr = Array.from(codigos);
+    const fresh = new Set();
+    for (let i = 0; i < codigosArr.length; i += 200) {
+      const batch = codigosArr.slice(i, i + 200);
+      const { data, error } = await supabase
+        .from('licitaciones_api')
+        .select('codigo,last_scraped_at')
+        .in('codigo', batch);
+      if (error) {
+        console.warn(`[lic-api] warning: no pude consultar cache (licitaciones_api): ${error.message}`);
+        break;
+      }
+      for (const row of data || []) {
+        const t = row?.last_scraped_at ? new Date(row.last_scraped_at).getTime() : NaN;
+        if (Number.isFinite(t) && t >= cutoffMs) fresh.add(row.codigo);
+      }
     }
-  }
 
-  if (rows.length) {
-    const { error } = await supabase.from('licitaciones_api').upsert(rows, { onConflict: 'codigo' });
-    if (error) throw error;
-  }
+    const rows = [];
+    for (const codigo of codigos) {
+      if (fresh.has(codigo)) continue;
+      try {
+        const url = buildDetailUrl({ codigo, ticket });
+        const payload = await fetchJsonWithFallback(url, {
+          context: { phase: 'lic_detail', codigo },
+          supabase,
+          pendingKind: 'lic_detail',
+          pendingIdentifier: codigo
+        });
+        // Muchos responses incluyen Listado/Licitacion; tomamos el primer objeto de detalle.
+        const list = extractListado(payload);
+        const detail = list && list.length ? list[0] : payload;
+        const mapped = mapApiRowToMinimal({}, detail);
+        if (mapped) rows.push(mapped);
+      } catch (e) {
+        console.warn(`[lic-api] falló detalle ${codigo}: ${String(e?.message || e)}`);
+      }
+    }
 
-  console.log(`[lic-api] upsert filas=${rows.length}`);
+    if (rows.length) {
+      const { error } = await supabase.from('licitaciones_api').upsert(rows, { onConflict: 'codigo' });
+      if (error) throw error;
+    }
+
+    console.log(`[lic-api] upsert filas=${rows.length}`);
+  } finally {
+    await closeFallbackBrowser();
+  }
 }
 
 main().catch((e) => {
