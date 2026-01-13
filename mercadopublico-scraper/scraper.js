@@ -444,14 +444,28 @@ async function scrapeCompraDetallada(page, codigo) {
       if (!productos.length) {
         const heading = findHeading('Listado de productos solicitados');
         const container = heading?.parentElement || document.body;
+        const isBadLine = (t) => {
+          const s = String(t || '').toLowerCase();
+          // Evitar basura típica (teléfonos, mails, rut, urls, etc.)
+          if (!s) return true;
+          if (s.includes('@') || s.includes('http')) return true;
+          if (s.includes('tel') || s.includes('telefono') || s.includes('dirección') || s.includes('direccion')) return true;
+          if (s.includes('rut')) return true;
+          // líneas numéricas o de "contacto" tipo +56 44 2...
+          if (/^\+?\d[\d\s-]{6,}$/.test(s)) return true;
+          // Requiere al menos una letra
+          if (!/[a-záéíóúñ]/i.test(s)) return true;
+          return false;
+        };
         const candidates = Array.from(container.querySelectorAll('li, div'))
           .map((el) => norm(el.innerText))
-          .filter((t) => t.length >= 15)
-          .slice(0, 200);
+          .filter((t) => t.length >= 20 && t.length <= 300)
+          .filter((t) => !isBadLine(t))
+          .slice(0, 120);
 
-        for (const t of candidates.slice(0, 50)) {
+        for (const t of candidates.slice(0, 40)) {
           // Heurística muy simple
-          productos.push({ id: '', nombre: t.slice(0, 200), descripcion: t.slice(0, 1000), cantidad: '', unidad: '' });
+          productos.push({ id: '', nombre: t.slice(0, 200), descripcion: t.slice(0, 800), cantidad: '', unidad: '' });
         }
       }
 

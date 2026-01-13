@@ -122,6 +122,8 @@ Qué hace:
 
 - **`MP_API_TICKET`**: ticket API oficial MercadoPúblico (necesario para Órdenes de Compra y Licitaciones grandes).
 - **`MP_OC_FROM` / `MP_OC_TO`**: rango YYYY-MM-DD para descargar órdenes de compra por día (si `TO` se omite, usa `FROM`).
+ - **`MP_LIC_FROM` / `MP_LIC_TO`**: rango YYYY-MM-DD para descargar licitaciones grandes por día (si `TO` se omite, usa `FROM`).
+ - **`MP_LIC_ESTADO`**: estado opcional para filtrar licitaciones grandes (ej: `activas`, `adjudicada`).
 
 ### 10) Órdenes de compra (API)
 
@@ -140,6 +142,29 @@ node oc_scraper.js
 ```
 
 Workflow: `.github/workflows/oc-scraper-scheduled.yml`
+
+### 11) Licitaciones grandes (API, >=100 UTM)
+
+Script: `licitaciones_api_scraper.js`
+
+- Lista licitaciones por fecha (`licitaciones.json?fecha=ddmmaaaa&ticket=...`)
+- Trae detalle por código (`licitaciones.json?codigo=...&ticket=...`)
+- Persiste en `licitaciones_api` con `raw_json` completo.
+
+Workflow: `.github/workflows/licitaciones-api-scheduled.yml`
+
+### 12) Vistas para BI (recomendadas)
+
+En `supabase/schema.sql` se incluyen vistas listas para dashboard con filtros:
+
+- `oportunidades_all`: unifica **compras ágiles** (scraping) + **licitaciones grandes** (API) con `tipo_proceso`.
+- `calendario_eventos`: eventos de apertura/cierre para ambos tipos.
+- `oc_enriquecidas`: órdenes con `tipo_origen` (compra_agil/licitation/desconocido).
+- `bi_oc_negocios_por_institucion`
+- `bi_oc_negocios_por_proveedor`
+- `bi_oc_productos`
+- `bi_oc_precios_producto_proveedor`
+
 
 ### 7) Estructura de datos en Supabase (tablas)
 

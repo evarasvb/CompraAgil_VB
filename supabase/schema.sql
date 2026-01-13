@@ -335,6 +335,9 @@ ON CONFLICT (licitacion_codigo, item_index) DO NOTHING;
 -- LICITACIONES GRANDES (>=100 UTM) - API (estructura base)
 -- =====================================================
 
+-- Requerido para gen_random_uuid() (ordenes_compra_items)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS licitaciones_api (
   codigo TEXT PRIMARY KEY,
   titulo TEXT,
@@ -395,6 +398,14 @@ CREATE TABLE IF NOT EXISTS ordenes_compra_items (
 
 COMMENT ON TABLE ordenes_compra_items IS 'Detalle/líneas de órdenes de compra (para BI y análisis de precios)';
 
+-- Índices recomendados para BI
+CREATE INDEX IF NOT EXISTS idx_oc_fecha_envio ON ordenes_compra(fecha_envio_oc);
+CREATE INDEX IF NOT EXISTS idx_oc_demandante ON ordenes_compra(demandante);
+CREATE INDEX IF NOT EXISTS idx_oc_proveedor ON ordenes_compra(proveedor);
+CREATE INDEX IF NOT EXISTS idx_oc_numero_licitacion ON ordenes_compra(numero_licitacion);
+CREATE INDEX IF NOT EXISTS idx_oc_items_numero_oc ON ordenes_compra_items(numero_oc);
+CREATE INDEX IF NOT EXISTS idx_oc_items_producto ON ordenes_compra_items(producto);
+
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
 -- =====================================================
@@ -433,6 +444,81 @@ SELECT
 FROM licitaciones_api a;
 
 COMMENT ON VIEW oportunidades_all IS 'Unión de compras ágiles (scraping) y licitaciones grandes (API) con campo tipo_proceso';
+
+-- =====================================================
+-- VISTAS BI: Órdenes de compra agrupadas + origen (compra_agil vs licitacion)
+-- =====================================================
+
+CREATE OR REPLACE VIEW oc_enriquecidas AS
+SELECT
+  oc.*,
+  COALESCE(o.tipo_proceso, 'desconocido') AS tipo_origen
+FROM ordenes_compra oc
+LEFT JOIN oportunidades_all o ON o.codigo = oc.numero_licitacion;
+
+COMMENT ON VIEW oc_enriquecidas IS 'Órdenes de compra con tipo_origen (compra_agil vs licitacion) vía join con oportunidades_all';
+
+CREATE OR REPLACE VIEW bi_oc_negocios_por_institucion AS
+SELECT
+  tipo_origen,
+  demandante,
+  COUNT(*) AS cantidad_ordenes,
+  COUNT(DISTINCT proveedor) AS cantidad_proveedores,
+  SUM(COALESCE(total, 0)) AS monto_total
+FROM oc_enriquecidas
+GROUP BY tipo_origen, demandante
+ORDER BY monto_total DESC;
+
+COMMENT ON VIEW bi_oc_negocios_por_institucion IS 'BI: agrupa órdenes por institución (demandante) y tipo_origen';
+
+CREATE OR REPLACE VIEW bi_oc_negocios_por_proveedor AS
+SELECT
+  tipo_origen,
+  proveedor,
+  COUNT(*) AS cantidad_ordenes,
+  COUNT(DISTINCT demandante) AS cantidad_instituciones,
+  SUM(COALESCE(total, 0)) AS monto_total
+FROM oc_enriquecidas
+GROUP BY tipo_origen, proveedor
+ORDER BY monto_total DESC;
+
+COMMENT ON VIEW bi_oc_negocios_por_proveedor IS 'BI: ranking de proveedores por monto y tipo_origen';
+
+CREATE OR REPLACE VIEW bi_oc_productos AS
+SELECT
+  e.tipo_origen,
+  i.codigo_producto,
+  i.producto,
+  COUNT(*) AS lineas,
+  COUNT(DISTINCT e.proveedor) AS proveedores,
+  COUNT(DISTINCT e.demandante) AS instituciones,
+  SUM(COALESCE(i.valor_total, 0)) AS monto_total,
+  MIN(i.precio_unitario) AS precio_unitario_min,
+  AVG(i.precio_unitario) AS precio_unitario_prom,
+  MAX(i.precio_unitario) AS precio_unitario_max
+FROM ordenes_compra_items i
+JOIN oc_enriquecidas e ON e.numero_oc = i.numero_oc
+GROUP BY e.tipo_origen, i.codigo_producto, i.producto
+ORDER BY monto_total DESC;
+
+COMMENT ON VIEW bi_oc_productos IS 'BI: productos por monto/precio y tipo_origen, basado en ordenes_compra_items';
+
+CREATE OR REPLACE VIEW bi_oc_precios_producto_proveedor AS
+SELECT
+  e.tipo_origen,
+  i.codigo_producto,
+  i.producto,
+  e.proveedor,
+  COUNT(*) AS muestras,
+  MIN(i.precio_unitario) AS precio_min,
+  AVG(i.precio_unitario) AS precio_prom,
+  MAX(i.precio_unitario) AS precio_max
+FROM ordenes_compra_items i
+JOIN oc_enriquecidas e ON e.numero_oc = i.numero_oc
+GROUP BY e.tipo_origen, i.codigo_producto, i.producto, e.proveedor
+ORDER BY precio_prom DESC;
+
+COMMENT ON VIEW bi_oc_precios_producto_proveedor IS 'BI: comparación de precios unitarios por proveedor para un producto';
 
 -- =====================================================
 -- CALENDARIO (eventos para compras ágiles + licitaciones grandes)
