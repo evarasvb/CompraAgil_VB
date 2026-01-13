@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
+// Nota: este scraper tolera 404 en detalle y reintenta errores transitorios del API.
 
 function env(name, fallback = '') {
   const v = process.env[name];

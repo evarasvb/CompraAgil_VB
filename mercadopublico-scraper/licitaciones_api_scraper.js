@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
+// Nota: este scraper aplica throttle + retry/backoff para mitigar error MP Codigo=10500.
 
 function env(name, fallback = '') {
   const v = process.env[name];
