@@ -1,8 +1,12 @@
 require('dotenv').config();
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createClient } = require('@supabase/supabase-js');
 const { matchLicitacion } = require('./matcher_firmavb');
+
+// Mitigar bloqueos anti-bot (CloudFront/WAF) ocultando señales de automatización.
+puppeteer.use(StealthPlugin());
 
 const config = require('./config');
 const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, toIsoNow } = require('./utils');
@@ -547,10 +551,24 @@ async function main() {
 
   const browser = await puppeteer.launch({
     headless: isHeadless ? 'new' : false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage'
+    ]
   });
 
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    // Hardening extra: ocultar webdriver y simular plugins/languages
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+    // Algunos sitios esperan window.chrome
+    // eslint-disable-next-line no-undef
+    window.chrome = { runtime: {} };
+  });
   await page.setViewport({ width: 1440, height: 900 });
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
   await page.setUserAgent(
@@ -696,6 +714,13 @@ async function main() {
       const detailTasks = comprasNuevas.map((compra) =>
         runDetail(async () => {
           const detailPage = await browser.newPage();
+          await detailPage.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+            // eslint-disable-next-line no-undef
+            window.chrome = { runtime: {} };
+          });
           await detailPage.setViewport({ width: 1440, height: 900 });
           detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
           await detailPage.setUserAgent(
