@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node scraper.js",
     "test": "node scraper.js --test",
-    "oc": "node oc_scraper.js"
+    "oc": "node oc_scraper.js",
+    "match": "node matching_engine.js",
+    "postular": "node postulacion_worker.js"
   },
   "engines": {
     "node": ">=18"
