@@ -289,6 +289,19 @@ WHERE fecha_extraccion >= NOW() - INTERVAL '7 days';
 COMMENT ON VIEW dashboard_estado IS 'Métricas generales de últimos 7 días';
 
 -- =====================================================
+-- VISTAS “ALL” PARA DASHBOARD (SIN FILTRO 7 DÍAS)
+-- =====================================================
+
+-- Todas las Compras Ágiles/licitaciones scrapeadas (para dashboards que deben mostrar TODO)
+CREATE OR REPLACE VIEW licitaciones_all AS
+SELECT
+  l.*
+FROM licitaciones l
+ORDER BY l.created_at DESC;
+
+COMMENT ON VIEW licitaciones_all IS 'Listado completo de compras ágiles scrapeadas (sin filtros de fecha)';
+
+-- =====================================================
 -- CONFIGURACIÓN DE ROW LEVEL SECURITY (RLS)
 -- DESACTIVADO para service_role key
 -- =====================================================
@@ -317,6 +330,157 @@ VALUES
   ('1161266-3-COT26', 2, 'Taco calendario', 'TACO CALENDARIO 2026 11X17 CM', '40', 'Globales')
 ON CONFLICT (licitacion_codigo, item_index) DO NOTHING;
 */
+
+-- =====================================================
+-- LICITACIONES GRANDES (>=100 UTM) - API (estructura base)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS licitaciones_api (
+  codigo TEXT PRIMARY KEY,
+  titulo TEXT,
+  organismo TEXT,
+  descripcion TEXT,
+  estado TEXT,
+  fecha_publicacion TIMESTAMP,
+  fecha_cierre TIMESTAMP,
+  link_detalle TEXT,
+  presupuesto_estimado NUMERIC(15,2),
+  raw_json JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE licitaciones_api IS 'Licitaciones (>=100 UTM) obtenidas por API (no incluye Compras Ágiles)';
+
+-- =====================================================
+-- ÓRDENES DE COMPRA (OC) - HISTÓRICO PARA BI
+-- =====================================================
+
+-- Cabecera OC
+CREATE TABLE IF NOT EXISTS ordenes_compra (
+  numero_oc TEXT PRIMARY KEY,
+  numero_licitacion TEXT,
+  demandante TEXT,
+  rut_demandante TEXT,
+  unidad_compra TEXT,
+  fecha_envio_oc TIMESTAMP,
+  estado TEXT,
+  proveedor TEXT,
+  rut_proveedor TEXT,
+  neto NUMERIC,
+  iva NUMERIC,
+  total NUMERIC,
+  subtotal NUMERIC,
+  raw_json JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis histórico';
+
+-- Ítems/líneas OC
+CREATE TABLE IF NOT EXISTS ordenes_compra_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero_oc TEXT REFERENCES ordenes_compra(numero_oc) ON DELETE CASCADE,
+  codigo_producto TEXT,
+  producto TEXT,
+  cantidad NUMERIC,
+  unidad TEXT,
+  precio_unitario NUMERIC,
+  descuento NUMERIC,
+  cargos NUMERIC,
+  valor_total NUMERIC,
+  especificaciones TEXT,
+  raw_json JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE ordenes_compra_items IS 'Detalle/líneas de órdenes de compra (para BI y análisis de precios)';
+
+-- =====================================================
+-- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
+-- =====================================================
+
+CREATE OR REPLACE VIEW oportunidades_all AS
+SELECT
+  'compra_agil'::text AS tipo_proceso,
+  l.codigo,
+  l.titulo,
+  l.organismo,
+  NULL::text AS descripcion,
+  l.estado,
+  (l.publicada_el)::timestamp AS fecha_publicacion,
+  (l.finaliza_el)::timestamp AS fecha_cierre,
+  l.link_detalle,
+  l.presupuesto_estimado,
+  l.categoria_match,
+  l.match_score,
+  l.created_at
+FROM licitaciones l
+UNION ALL
+SELECT
+  'licitacion'::text AS tipo_proceso,
+  a.codigo,
+  a.titulo,
+  a.organismo,
+  a.descripcion,
+  a.estado,
+  a.fecha_publicacion,
+  a.fecha_cierre,
+  a.link_detalle,
+  a.presupuesto_estimado,
+  NULL::text AS categoria_match,
+  NULL::numeric AS match_score,
+  a.created_at
+FROM licitaciones_api a;
+
+COMMENT ON VIEW oportunidades_all IS 'Unión de compras ágiles (scraping) y licitaciones grandes (API) con campo tipo_proceso';
+
+-- =====================================================
+-- CALENDARIO (eventos para compras ágiles + licitaciones grandes)
+-- =====================================================
+
+CREATE OR REPLACE VIEW calendario_eventos AS
+SELECT
+  l.codigo AS codigo,
+  'compra_agil'::text AS tipo_proceso,
+  l.titulo,
+  'apertura'::text AS tipo_evento,
+  (l.publicada_el)::timestamp AS fecha,
+  l.link_detalle
+FROM licitaciones l
+WHERE l.publicada_el IS NOT NULL AND l.publicada_el <> ''
+UNION ALL
+SELECT
+  l.codigo AS codigo,
+  'compra_agil'::text AS tipo_proceso,
+  l.titulo,
+  'cierre'::text AS tipo_evento,
+  (l.finaliza_el)::timestamp AS fecha,
+  l.link_detalle
+FROM licitaciones l
+WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
+UNION ALL
+SELECT
+  a.codigo AS codigo,
+  'licitacion'::text AS tipo_proceso,
+  a.titulo,
+  'apertura'::text AS tipo_evento,
+  a.fecha_publicacion AS fecha,
+  a.link_detalle
+FROM licitaciones_api a
+WHERE a.fecha_publicacion IS NOT NULL
+UNION ALL
+SELECT
+  a.codigo AS codigo,
+  'licitacion'::text AS tipo_proceso,
+  a.titulo,
+  'cierre'::text AS tipo_evento,
+  a.fecha_cierre AS fecha,
+  a.link_detalle
+FROM licitaciones_api a
+WHERE a.fecha_cierre IS NOT NULL
+ORDER BY fecha ASC;
+
+COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para calendario, separando compra_agil vs licitacion';
 
 -- =====================================================
 -- FIN DEL SCHEMA

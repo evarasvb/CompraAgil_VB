@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node scraper.js",
-    "test": "node scraper.js --test"
+    "test": "node scraper.js --test",
+    "oc": "node oc_scraper.js"
   },
   "engines": {
     "node": ">=18"

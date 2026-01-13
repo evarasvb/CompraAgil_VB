@@ -15,6 +15,8 @@ El objetivo es **persistir los datos en Supabase** (Postgres) usando `upsert` pa
   - `licitaciones` (cabecera)
   - `licitacion_items` (productos)
   - `licitacion_documentos` (adjuntos, opcional)
+  - `ordenes_compra` / `ordenes_compra_items` (API, histórico BI)
+  - `licitaciones_api` (API, licitaciones grandes >=100 UTM)
 
 ### 2) Requisitos
 
@@ -109,6 +111,7 @@ Qué hace:
 
 - **`SUPABASE_URL`**: URL del proyecto Supabase.
 - **`SUPABASE_KEY`**: API key con permisos de lectura/escritura para las tablas (típicamente **service role** en CI).
+- **`SUPABASE_SERVICE_KEY`** *(opcional)*: alternativa a `SUPABASE_KEY` para jobs automáticos.
 - **`MAX_PAGES`**:
   - `1` (default): procesa 1 página.
   - `N`: procesa N páginas.
@@ -116,6 +119,27 @@ Qué hace:
 - **`INCREMENTAL_MODE`**:
   - `true`: procesa solo compras recientes y evita reprocesar códigos existentes.
   - `false`: procesa según el rango `--from/--to` o el default “hoy”.
+
+- **`MP_API_TICKET`**: ticket API oficial MercadoPúblico (necesario para Órdenes de Compra y Licitaciones grandes).
+- **`MP_OC_FROM` / `MP_OC_TO`**: rango YYYY-MM-DD para descargar órdenes de compra por día (si `TO` se omite, usa `FROM`).
+
+### 10) Órdenes de compra (API)
+
+Script: `oc_scraper.js`
+
+- Lista órdenes por fecha (`ordenesdecompra.json?fecha=ddmmaaaa&ticket=...`)
+- Luego trae detalle (`OrdenCompra.json?codigo=...&ticket=...`)
+- Persiste en:
+  - `ordenes_compra` (cabecera, incluye `raw_json`)
+  - `ordenes_compra_items` (detalle, incluye `raw_json`)
+
+Ejecutar local:
+
+```bash
+node oc_scraper.js
+```
+
+Workflow: `.github/workflows/oc-scraper-scheduled.yml`
 
 ### 7) Estructura de datos en Supabase (tablas)
 
