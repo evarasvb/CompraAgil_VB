@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "FirmaVB Extension (Pending Sync)",
+  "version": "0.1.0",
+  "description": "Recupera tareas pendientes de scraping y las sincroniza vía pending_sync_server.",
+  "permissions": [
+    "alarms",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
+
