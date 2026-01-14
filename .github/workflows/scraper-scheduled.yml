@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   scrape:
-    name: Ejecutar scraper incremental
+    name: Ejecutar scraper (FULL, sin incremental)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           npx puppeteer browsers install chrome
 
-      - name: Ejecutar scraper (incremental)
+      - name: Ejecutar scraper (FULL)
         working-directory: mercadopublico-scraper
         shell: bash
         run: |

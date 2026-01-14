@@ -207,22 +207,26 @@ async function extractComprasFromPage(page) {
     const codeRe = /\d{6,7}-\d+-[A-Z]{2,6}\d+/;
     const dateRe = /\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g;
 
-    // Nuevo DOM: títulos en elementos con role="heading" dentro del card
-    const headings = Array.from(document.querySelectorAll('[role="heading"]'));
-    for (const heading of headings) {
-      const card = findCardContainer(heading);
+    // DOM tolerante: preferir headings (role=heading o tags h*). Si no existen, caer al CTA "Revisar detalle".
+    const headingSelectors = '[role="heading"], h1, h2, h3, h4, h5';
+    let anchors = Array.from(document.querySelectorAll(headingSelectors));
+    if (!anchors.length) {
+      anchors = Array.from(document.querySelectorAll('button, a')).filter((el) => /revisar detalle/i.test(el.textContent || ''));
+    }
+
+    for (const anchor of anchors) {
+      const card = findCardContainer(anchor);
       if (!card) continue;
 
       const blob = normalize(card?.innerText || '');
       const lines = getLines(card);
 
-      // Código: suele estar en un elemento role="generic" antes del heading
-      let codigo = null;
-      const generics = Array.from(card.querySelectorAll('[role="generic"]'));
-      const headingIdx = generics.findIndex((g) => g.contains(heading) || g === heading);
-      if (headingIdx > 0) {
-        for (let i = headingIdx - 1; i >= 0; i--) {
-          const t = normalize(generics[i].innerText || generics[i].textContent || '');
+      // Código: tolerante (buscar en todo el card). Si el DOM trae roles "generic", intentar usarlo como pista.
+      let codigo = (blob.match(codeRe) || [null])[0];
+      if (!codigo) {
+        const generics = Array.from(card.querySelectorAll('[role="generic"]'));
+        for (const g of generics) {
+          const t = normalize(g.innerText || g.textContent || '');
           const m = t.match(codeRe);
           if (m) {
             codigo = m[0];
@@ -230,20 +234,23 @@ async function extractComprasFromPage(page) {
           }
         }
       }
-      if (!codigo) {
-        codigo = (blob.match(codeRe) || [null])[0];
-      }
       if (!codigo) continue;
       if (seen.has(codigo)) continue;
       seen.add(codigo);
 
-      // Estado verde: "Publicada recibiendo cotizaciones" en el primer generic
+      // Estado (tolerante): buscar algo que contenga "Publicada", "Cerrada", etc.
       const estado =
-        normalize(generics[0]?.innerText || generics[0]?.textContent || '') ||
-        (lines.find((l) => /Publicada/i.test(l)) || '');
+        lines.find((l) => /(Publicada|Cerrada|Cancelada|Desierta|Adjudicada)/i.test(l)) ||
+        '';
 
-      // Título: contenido del heading (preferido)
-      const titulo = normalize(heading.innerText || heading.textContent || '');
+      // Título: preferir heading dentro del card; si no existe, usar texto del anchor si parece heading; si no, fallback.
+      const cardHeading =
+        card.querySelector(headingSelectors) ||
+        null;
+      const titulo =
+        normalize(cardHeading?.innerText || cardHeading?.textContent || '') ||
+        normalize(anchor?.innerText || anchor?.textContent || '') ||
+        '';
 
       const fechas = blob.match(dateRe) || [];
       const publicada_el = fechas[0] || '';
@@ -317,6 +324,33 @@ function getSupabaseClientOrNull({ allowNull }) {
   });
 }
 
+function isMissingTableError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  // Postgres: relation "x" does not exist
+  if (msg.includes('does not exist') && msg.includes('relation')) return true;
+  // Supabase PostgREST cache/schema errors
+  if (msg.includes('schema cache') && (msg.includes('not found') || msg.includes('does not exist'))) return true;
+  if (msg.includes('could not find the') && msg.includes('table')) return true;
+  return false;
+}
+
+async function upsertWithFallback(supabase, { tables, rows, onConflict }) {
+  let lastError = null;
+  for (const table of tables) {
+    try {
+      const { error } = await supabase.from(table).upsert(rows, { onConflict });
+      if (error) throw error;
+      return table;
+    } catch (e) {
+      lastError = e;
+      if (!isMissingTableError(e)) throw e;
+      // Si la tabla no existe, probamos la siguiente alternativa.
+      console.warn(`Tabla '${table}' no existe o no está expuesta; probando fallback... (${String(e?.message || e)})`);
+    }
+  }
+  throw lastError;
+}
+
 async function debugDumpPage(page) {
   try {
     const title = await page.title();
@@ -332,26 +366,20 @@ async function debugDumpPage(page) {
 }
 
 async function upsertLicitaciones(supabase, rows) {
-  const table = 'licitaciones';
+  const tables = ['licitaciones', 'compras_agiles'];
   const batches = chunkArray(rows, 200);
 
   for (const batch of batches) {
-    const { error } = await supabase
-      .from(table)
-      .upsert(batch, { onConflict: 'codigo' });
-    if (error) throw error;
+    await upsertWithFallback(supabase, { tables, rows: batch, onConflict: 'codigo' });
   }
 }
 
 async function upsertLicitacionItems(supabase, rows) {
-  const table = 'licitacion_items';
+  const tables = ['licitacion_items', 'compras_agiles_items'];
   const batches = chunkArray(rows, 200);
 
   for (const batch of batches) {
-    const { error } = await supabase
-      .from(table)
-      .upsert(batch, { onConflict: 'licitacion_codigo,item_index' });
-    if (error) throw error;
+    await upsertWithFallback(supabase, { tables, rows: batch, onConflict: 'licitacion_codigo,item_index' });
   }
 }
 
@@ -526,11 +554,18 @@ async function fetchExistingCodigos(supabase, codigos) {
   const existing = new Set();
   const batches = chunkArray(codigos, 200);
   for (const batch of batches) {
-    const { data, error } = await supabase
-      .from('licitaciones')
-      .select('codigo')
-      .in('codigo', batch);
-    if (error) throw error;
+    // Compatibilidad: algunos entornos usan `compras_agiles` en vez de `licitaciones`.
+    let data = null;
+    try {
+      const r1 = await supabase.from('licitaciones').select('codigo').in('codigo', batch);
+      if (r1.error) throw r1.error;
+      data = r1.data;
+    } catch (e) {
+      if (!isMissingTableError(e)) throw e;
+      const r2 = await supabase.from('compras_agiles').select('codigo').in('codigo', batch);
+      if (r2.error) throw r2.error;
+      data = r2.data;
+    }
     for (const row of data || []) existing.add(row.codigo);
   }
   return existing;
@@ -816,12 +851,15 @@ async function main() {
                 url: d.url || ''
               }));
               try {
-                const { error } = await supabase
-                  .from('licitacion_documentos')
-                  .upsert(docRows, { onConflict: 'licitacion_codigo,url' });
-                if (error) throw error;
+                await upsertWithFallback(supabase, {
+                  tables: ['licitacion_documentos', 'compras_agiles_documentos'],
+                  rows: docRows,
+                  onConflict: 'licitacion_codigo,url'
+                });
               } catch (e) {
-                console.warn(`Tabla 'licitacion_documentos' no disponible o falló inserción (${compra.codigo}): ${String(e?.message || e)}`);
+                console.warn(
+                  `Tabla de documentos no disponible o falló inserción (${compra.codigo}): ${String(e?.message || e)}`
+                );
               }
             }
           } finally {
@@ -844,6 +882,8 @@ async function main() {
     }
   } catch (err) {
     console.error('Error durante el scraping:', err);
+    // Importante: en CI queremos que el workflow falle si no se pudo scrapear/persistir.
+    process.exitCode = 1;
   } finally {
     await browser.close();
     console.log(
