@@ -147,6 +147,27 @@ CREATE TABLE IF NOT EXISTS licitacion_items (
   PRIMARY KEY (licitacion_codigo, item_index)
 );
 
+-- =====================================================
+-- MIGRACIONES IDempotentes (cuando la tabla ya existe)
+-- =====================================================
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS licitacion_codigo TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS item_index INTEGER;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS producto_id TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS nombre TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS descripcion TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS cantidad TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS unidad TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS id_producto_inventario TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS match_confidence NUMERIC(5,2);
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS match_method TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS precio_unitario_sugerido NUMERIC(12,2);
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS precio_total_sugerido NUMERIC(12,2);
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS margen_estimado NUMERIC(5,2);
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS match_procesado BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS incluido_en_oferta BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS notas TEXT;
+ALTER TABLE licitacion_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 COMMENT ON TABLE licitacion_items IS 'Items/productos de cada licitación con matching a inventario';
 COMMENT ON COLUMN licitacion_items.match_confidence IS 'Confianza del matching: 0-100%';
 COMMENT ON COLUMN licitacion_items.match_method IS 'Método usado para el matching';
