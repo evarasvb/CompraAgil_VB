@@ -58,14 +58,8 @@ jobs:
           echo "Aplicando schema.sql a Supabase (sin imprimir credenciales)..."
           # Nota: GitHub-hosted runners suelen no tener conectividad IPv6. Si el host resuelve solo a AAAA,
           # la conexión fallará con "Network is unreachable". En ese caso, usa el connection string de
-          # "Connection pooling" (pooler) de Supabase como SUPABASE_DB_URL (normalmente IPv4).
-          host="$(python3 - <<'PY'
-import os
-from urllib.parse import urlparse
-u=os.environ.get("SUPABASE_DB_URL","")
-print(urlparse(u).hostname or "")
-PY
-)"
+          # Connection Pooling (pooler) de Supabase como SUPABASE_DB_URL (normalmente IPv4).
+          host="$(echo "$SUPABASE_DB_URL" | sed -E 's#^[^@]+@([^:/?]+).*#\1#')"
           if [[ -n "${host:-}" ]]; then
             ipv4="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}' || true)"
             ipv6="$(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1; exit}' || true)"
