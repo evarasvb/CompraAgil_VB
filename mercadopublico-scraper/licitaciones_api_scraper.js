@@ -10,6 +10,7 @@ const {
   isRetryableForFallback,
   getBlockMetricsSnapshot
 } = require('./anti_block');
+const { logSystemEvent } = require('./system_logs');
 
 function env(name, fallback = '') {
   const v = process.env[name];
@@ -290,6 +291,7 @@ async function main() {
   let errores = null;
   let itemsObtenidos = 0;
   try {
+    await logSystemEvent('INFO', 'SCRAPER', 'Inicio del ciclo de scraping (Licitaciones API)', null);
     const from = env('MP_LIC_FROM').trim() || todayYYYYMMDD();
     const to = env('MP_LIC_TO').trim() || from;
     const estado = env('MP_LIC_ESTADO').trim() || '';
@@ -324,6 +326,11 @@ async function main() {
     }
 
     console.log(`[lic-api] codigos únicos: ${codigos.size} (${from}..${to}) estado=${estado || '(sin filtro)'}`);
+    await logSystemEvent('INFO', 'SCRAPER', `Se encontraron ${codigos.size} licitaciones (códigos únicos)`, {
+      from,
+      to,
+      estado: estado || null
+    });
 
     // Cache inteligente: si ya existe y fue scrapeado hace <30min, saltar detalle.
     // No re-scrapear licitaciones cerradas.
@@ -407,9 +414,11 @@ async function main() {
     console.log(`[lic-api] upsert filas=${rows.length}`);
     console.log(`[lic-api] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
     itemsObtenidos = rows.length;
+    await logSystemEvent('SUCCESS', 'SCRAPER', 'Ciclo finalizado correctamente (Licitaciones API)', { processed: rows.length });
   } catch (e) {
     status = 'fail';
     errores = String(e?.message || e);
+    await logSystemEvent('ERROR', 'SCRAPER', 'Fallo crítico en ejecución (Licitaciones API)', { error: errores });
     throw e;
   } finally {
     const duracionMs = Date.now() - runStartedAt;

@@ -10,6 +10,7 @@ const {
   isRetryableForFallback,
   getBlockMetricsSnapshot
 } = require('./anti_block');
+const { logSystemEvent } = require('./system_logs');
 
 function env(name, fallback = '') {
   const v = process.env[name];
@@ -308,6 +309,7 @@ async function main() {
   let itemsObtenidos = 0;
   let headersObtenidos = 0;
   try {
+    await logSystemEvent('INFO', 'SCRAPER', 'Inicio del ciclo de scraping (OC API)', null);
     const from = env('MP_OC_FROM').trim() || todayYYYYMMDD();
     const to = env('MP_OC_TO').trim() || from;
     const fechas = dateRangeDDMMAAAA(from, to);
@@ -342,6 +344,10 @@ async function main() {
     }
 
     console.log(`[oc] codigos únicos: ${codigos.size} (${from}..${to})`);
+    await logSystemEvent('INFO', 'SCRAPER', `Se encontraron ${codigos.size} órdenes de compra (códigos únicos)`, {
+      from,
+      to
+    });
 
     // Cache inteligente: si ya existe y fue scrapeado hace <30min, saltar detalle.
     // Si está viejo, marcar como "stale" y NO re-scrapear inmediatamente (ver schema).
@@ -436,9 +442,14 @@ async function main() {
     itemsObtenidos = totalItems;
     console.log(`[oc] upsert headers=${headers.length} refresh items=${totalItems}`);
     console.log(`[oc] métricas anti-bloqueo: ${JSON.stringify(getBlockMetricsSnapshot())}`);
+    await logSystemEvent('SUCCESS', 'SCRAPER', 'Ciclo finalizado correctamente (OC API)', {
+      processed: headers.length,
+      items: totalItems
+    });
   } catch (e) {
     status = 'fail';
     errores = String(e?.message || e);
+    await logSystemEvent('ERROR', 'SCRAPER', 'Fallo crítico en ejecución (OC API)', { error: errores });
     throw e;
   } finally {
     const duracionMs = Date.now() - runStartedAt;

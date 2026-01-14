@@ -10,6 +10,7 @@ puppeteer.use(StealthPlugin());
 
 const config = require('./config');
 const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, toIsoNow } = require('./utils');
+const { logSystemEvent } = require('./system_logs');
 
 function parseArgs(argv) {
   const args = {
@@ -605,6 +606,11 @@ async function main() {
   let maxPages = maxPagesArg ?? config.maxPages;
 
   try {
+    await logSystemEvent('INFO', 'SCRAPER', 'Inicio del ciclo de scraping (Compra Ágil)', {
+      incremental: incrementalMode,
+      from: params?.date_from,
+      to: params?.date_to
+    });
     let currentPage = startPage;
     const runDetail = withConcurrencyLimit(3);
 
@@ -654,6 +660,12 @@ async function main() {
       );
 
       console.log(`Extraídas ${compras.length} compras en la página ${currentPage}`);
+
+      await logSystemEvent('INFO', 'SCRAPER', `Se encontraron ${compras.length} compras en página ${currentPage}`, {
+        page: currentPage,
+        maxPages: maxPages || null,
+        incremental: incrementalMode
+      });
 
       if (args.testSimple) {
         // Modo “empezar simple”: sin Supabase ni detalle
@@ -829,8 +841,14 @@ async function main() {
       currentPage += 1;
       await sleepRandom(config.delayBetweenPagesMs.min, config.delayBetweenPagesMs.max);
     }
+    await logSystemEvent('SUCCESS', 'SCRAPER', 'Ciclo finalizado correctamente (Compra Ágil)', {
+      processed: allCompras.length,
+      totalResultados: totalResultados ?? null,
+      incremental: incrementalMode
+    });
   } catch (err) {
     console.error('Error durante el scraping:', err);
+    await logSystemEvent('ERROR', 'SCRAPER', 'Fallo crítico en ejecución (Compra Ágil)', { error: String(err?.message || err) });
   } finally {
     await browser.close();
     console.log(

@@ -491,6 +491,114 @@ COMMENT ON TABLE scraper_health_log IS 'Log de salud de scrapers (status, duraci
 CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
 
 -- =====================================================
+-- BITÁCORA / LOGS DEL SISTEMA (OBSERVABILIDAD)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS system_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  level TEXT NOT NULL, -- INFO|ERROR|WARNING|SUCCESS
+  component TEXT NOT NULL, -- SCRAPER|OPENAI_MATCHER|ODOO_SYNC|...
+  message TEXT NOT NULL,
+  metadata JSONB
+);
+
+COMMENT ON TABLE system_logs IS 'Bitácora central para observabilidad (eventos humanos + metadata técnica).';
+CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level);
+CREATE INDEX IF NOT EXISTS idx_system_logs_component ON system_logs(component);
+
+-- =====================================================
+-- RLS & POLICIES (SEGURIDAD)
+-- Reglas:
+-- - authenticated: puede leer (SELECT)
+-- - service_role: puede escribir (INSERT/UPDATE/DELETE)
+-- Nota: service_role típicamente bypass RLS, pero dejamos policies explícitas.
+-- =====================================================
+
+-- system_logs
+ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS system_logs_read_authenticated ON system_logs;
+CREATE POLICY system_logs_read_authenticated
+  ON system_logs
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Escritura: service_role y anon (requerido para scraper/robots)
+DROP POLICY IF EXISTS system_logs_insert_service_role_or_anon ON system_logs;
+CREATE POLICY system_logs_insert_service_role_or_anon
+  ON system_logs
+  FOR INSERT
+  TO public
+  WITH CHECK (auth.role() IN ('service_role', 'anon'));
+
+-- pending_extension_sync
+ALTER TABLE pending_extension_sync ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pending_extension_sync_read_authenticated ON pending_extension_sync;
+CREATE POLICY pending_extension_sync_read_authenticated
+  ON pending_extension_sync
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS pending_extension_sync_insert_service_role ON pending_extension_sync;
+CREATE POLICY pending_extension_sync_insert_service_role
+  ON pending_extension_sync
+  FOR INSERT
+  TO public
+  WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS pending_extension_sync_update_service_role ON pending_extension_sync;
+CREATE POLICY pending_extension_sync_update_service_role
+  ON pending_extension_sync
+  FOR UPDATE
+  TO public
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS pending_extension_sync_delete_service_role ON pending_extension_sync;
+CREATE POLICY pending_extension_sync_delete_service_role
+  ON pending_extension_sync
+  FOR DELETE
+  TO public
+  USING (auth.role() = 'service_role');
+
+-- scraper_health_log
+ALTER TABLE scraper_health_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS scraper_health_log_read_authenticated ON scraper_health_log;
+CREATE POLICY scraper_health_log_read_authenticated
+  ON scraper_health_log
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS scraper_health_log_insert_service_role ON scraper_health_log;
+CREATE POLICY scraper_health_log_insert_service_role
+  ON scraper_health_log
+  FOR INSERT
+  TO public
+  WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS scraper_health_log_update_service_role ON scraper_health_log;
+CREATE POLICY scraper_health_log_update_service_role
+  ON scraper_health_log
+  FOR UPDATE
+  TO public
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
+
+DROP POLICY IF EXISTS scraper_health_log_delete_service_role ON scraper_health_log;
+CREATE POLICY scraper_health_log_delete_service_role
+  ON scraper_health_log
+  FOR DELETE
+  TO public
+  USING (auth.role() = 'service_role');
+
+-- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
 -- =====================================================
 
