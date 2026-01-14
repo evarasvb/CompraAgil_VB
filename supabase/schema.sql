@@ -572,6 +572,7 @@ COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para calendario
 -- =====================================================
 -- FIN DEL SCHEMA
 -- =====================================================
+-- (touch) Trigger apply-schema workflow after SUPABASE_DB_URL is configured.
 
 -- Para verificar que todo se creó correctamente:
 SELECT 
