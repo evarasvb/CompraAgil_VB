@@ -126,9 +126,9 @@ module.exports = {
    * Puedes fijarlo manualmente (ej. 314) si el sitio no entrega el total de forma confiable.
    */
   maxPages: calculateMaxPages(),
-  maxRetries: 3,
-  navigationTimeoutMs: 180000,
-  resultsTimeoutMs: 150000,
+  maxRetries: 5,
+  navigationTimeoutMs: 120000,
+  resultsTimeoutMs: 300000,
   delayBetweenPagesMs: {
     min: 2000,
     max: 5000

@@ -27,7 +27,7 @@ jobs:
   scrape:
     name: Ejecutar scraper incremental
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       # Secrets (requeridos)
