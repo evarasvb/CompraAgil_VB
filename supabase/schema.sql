@@ -232,8 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_licitaciones_match
   WHERE match_encontrado = TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_licitaciones_fecha_cierre 
-  ON licitaciones(fecha_cierre_primer_llamado) 
-  WHERE fecha_cierre_primer_llamado > NOW();
+  ON licitaciones(fecha_cierre_primer_llamado);
 
 -- Índices en items
 CREATE INDEX IF NOT EXISTS idx_items_licitacion 
