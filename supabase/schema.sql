@@ -64,6 +64,40 @@ CREATE TABLE IF NOT EXISTS licitaciones (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- =====================================================
+-- MIGRACIONES IDempotentes (cuando la tabla ya existe)
+-- =====================================================
+-- Si la tabla `licitaciones` fue creada previamente con un schema parcial,
+-- estas columnas pueden no existir y los COMMENT/INDEX/VIEW fallarán.
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS titulo TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS estado TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS estado_detallado TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS publicada_el TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS finaliza_el TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS organismo TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS rut_institucion TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS departamento TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS presupuesto_estimado NUMERIC(15,2);
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS tipo_presupuesto TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS fecha_publicacion TIMESTAMP WITH TIME ZONE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS fecha_cierre_primer_llamado TIMESTAMP WITH TIME ZONE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS fecha_cierre_segundo_llamado TIMESTAMP WITH TIME ZONE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS fecha_extraccion TIMESTAMP WITH TIME ZONE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS direccion_entrega TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS plazo_entrega TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS link_detalle TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS categoria TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS categoria_match TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS match_score NUMERIC(10,2);
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS palabras_encontradas JSONB;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS tiene_adjuntos BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS procesada BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS match_encontrado BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS oferta_enviada BOOLEAN DEFAULT FALSE;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS oferta_id TEXT;
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE licitaciones ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Comentarios para documentación
 COMMENT ON TABLE licitaciones IS 'Almacena compras ágiles de MercadoPúblico con datos completos';
 COMMENT ON COLUMN licitaciones.codigo IS 'Código único de la licitación en MercadoPúblico';
