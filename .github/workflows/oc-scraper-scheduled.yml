@@ -71,6 +71,11 @@ jobs:
         working-directory: mercadopublico-scraper
         run: npm install
 
+      - name: Install Chrome for Puppeteer
+        if: steps.validate.outputs.skip != 'true'
+        working-directory: mercadopublico-scraper
+        run: npx puppeteer browsers install chrome
+
       - name: Ejecutar scraper OC
         if: steps.validate.outputs.skip != 'true'
         working-directory: mercadopublico-scraper
