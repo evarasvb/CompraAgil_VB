@@ -366,7 +366,9 @@ async function debugDumpPage(page) {
 }
 
 async function upsertLicitaciones(supabase, rows) {
-  const tables = ['licitaciones', 'compras_agiles'];
+  // Preferimos `compras_agiles` si existe (compatibilidad con instancias antiguas),
+  // y caemos a `licitaciones` (schema actual del repo).
+  const tables = ['compras_agiles', 'licitaciones'];
   const batches = chunkArray(rows, 200);
 
   for (const batch of batches) {
@@ -375,7 +377,7 @@ async function upsertLicitaciones(supabase, rows) {
 }
 
 async function upsertLicitacionItems(supabase, rows) {
-  const tables = ['licitacion_items', 'compras_agiles_items'];
+  const tables = ['compras_agiles_items', 'licitacion_items'];
   const batches = chunkArray(rows, 200);
 
   for (const batch of batches) {
@@ -557,12 +559,12 @@ async function fetchExistingCodigos(supabase, codigos) {
     // Compatibilidad: algunos entornos usan `compras_agiles` en vez de `licitaciones`.
     let data = null;
     try {
-      const r1 = await supabase.from('licitaciones').select('codigo').in('codigo', batch);
+      const r1 = await supabase.from('compras_agiles').select('codigo').in('codigo', batch);
       if (r1.error) throw r1.error;
       data = r1.data;
     } catch (e) {
       if (!isMissingTableError(e)) throw e;
-      const r2 = await supabase.from('compras_agiles').select('codigo').in('codigo', batch);
+      const r2 = await supabase.from('licitaciones').select('codigo').in('codigo', batch);
       if (r2.error) throw r2.error;
       data = r2.data;
     }
@@ -852,7 +854,7 @@ async function main() {
               }));
               try {
                 await upsertWithFallback(supabase, {
-                  tables: ['licitacion_documentos', 'compras_agiles_documentos'],
+                  tables: ['compras_agiles_documentos', 'licitacion_documentos'],
                   rows: docRows,
                   onConflict: 'licitacion_codigo,url'
                 });
