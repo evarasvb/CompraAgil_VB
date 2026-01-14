@@ -123,6 +123,8 @@ async function withRetries(fn, { retries, onRetry }) {
 }
 
 async function waitForResults(page) {
+  // Delay “humano” inicial para reducir flags anti-bot (3–8s)
+  await sleepRandom(3000, 8000);
   // React: tolerante a cambios de DOM (texto o patrones)
   await page.waitForFunction(() => {
     const bodyText = (document.body && (document.body.innerText || document.body.textContent)) || '';
@@ -355,7 +357,7 @@ async function upsertLicitacionItems(supabase, rows) {
 
 async function scrapeCompraDetallada(page, codigo) {
   const url = `https://buscador.mercadopublico.cl/ficha?code=${encodeURIComponent(codigo)}`;
-  await page.goto(url, { waitUntil: 'networkidle2' });
+  await page.goto(url, { waitUntil: ['domcontentloaded', 'networkidle2'] });
 
   // Esperar a que cargue el texto clave o al menos el body
   await page.waitForFunction(() => {
@@ -595,6 +597,11 @@ async function main() {
   await page.setUserAgent(
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+    Accept: 'text/html,application/xhtml+xml',
+    Referer: 'https://www.mercadopublico.cl/'
+  });
 
   const allCompras = [];
   const startPage = 1;
@@ -614,7 +621,7 @@ async function main() {
 
       await withRetries(
         async () => {
-          await page.goto(url, { waitUntil: 'networkidle2' });
+          await page.goto(url, { waitUntil: ['domcontentloaded', 'networkidle2'] });
           await waitForResults(page);
         },
         {
@@ -754,6 +761,11 @@ async function main() {
           await detailPage.setUserAgent(
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           );
+          await detailPage.setExtraHTTPHeaders({
+            'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+            Accept: 'text/html,application/xhtml+xml',
+            Referer: 'https://www.mercadopublico.cl/'
+          });
 
           try {
             const detalle = await withRetries(
