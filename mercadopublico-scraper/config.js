@@ -127,8 +127,10 @@ module.exports = {
    */
   maxPages: calculateMaxPages(),
   maxRetries: 5,
-  navigationTimeoutMs: 120000,
-  resultsTimeoutMs: 300000,
+  // En CI (GitHub Actions) preferimos fallar rápido y reintentar con reload,
+  // en lugar de esperar 5 minutos en un estado colgado.
+  navigationTimeoutMs: 60000,
+  resultsTimeoutMs: 60000,
   delayBetweenPagesMs: {
     min: 2000,
     max: 5000

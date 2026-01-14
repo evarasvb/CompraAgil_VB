@@ -122,21 +122,83 @@ async function withRetries(fn, { retries, onRetry }) {
   throw lastErr;
 }
 
-async function waitForResults(page) {
-  // Delay “humano” inicial para reducir flags anti-bot (3–8s)
-  await sleepRandom(3000, 8000);
-  // React: tolerante a cambios de DOM (texto o patrones)
-  await page.waitForFunction(() => {
+function ts() {
+  return new Date().toISOString();
+}
+
+function stringifyErr(err) {
+  const msg = String(err?.message || err || '');
+  return msg || 'Error desconocido';
+}
+
+async function waitForResults(page, { timeoutMs }) {
+  // En CI evitamos delays largos: preferimos reintentar rápido + reload.
+  const isCI = Boolean(process.env.GITHUB_ACTIONS);
+  await sleepRandom(isCI ? 200 : 3000, isCI ? 900 : 8000);
+
+  console.log(`[${ts()}] Esperando resultados (timeout=${timeoutMs}ms)...`);
+
+  // React: tolerante a cambios de DOM (texto o patrones).
+  // Usamos waitForFunction para detectar cuando HAY datos visibles, sin depender
+  // de un selector frágil.
+  const handle = await page.waitForFunction(() => {
     const bodyText = (document.body && (document.body.innerText || document.body.textContent)) || '';
+    const lower = String(bodyText).toLowerCase();
+
+    // Señales típicas de bloqueo/WAF/captcha.
+    if (lower.includes('access denied') || lower.includes('captcha') || lower.includes('robot')) {
+      return 'blocked';
+    }
+
     const hasCodigo = /\d{6,7}-\d+-[A-Z]{2,6}\d+/.test(bodyText);
-    const hasTotal = /Existen\s+[\d\.\,]+\s+resultados\s+para\s+tu\s+búsqueda/i.test(bodyText);
+    const hasTotal = /Existen\s+[\d\.\,]+\s+resultados(?:\s+para\s+tu\s+búsqueda)?/i.test(bodyText);
 
     const candidates = Array.from(document.querySelectorAll('button, a'));
     // Texto actualizado del sitio: "Revisar detalle"
     const hasDetalle = candidates.some((el) => /revisar detalle/i.test(el.textContent || ''));
 
-    return hasDetalle || hasCodigo || hasTotal;
-  }, { timeout: config.resultsTimeoutMs });
+    if (hasDetalle || hasCodigo || hasTotal) return 'ready';
+    return false;
+  }, { timeout: timeoutMs, polling: 500 });
+
+  const state = await handle.jsonValue();
+  if (state === 'blocked') {
+    throw new Error('Detectado posible bloqueo/WAF/captcha al esperar resultados.');
+  }
+
+  console.log(`[${ts()}] Resultados detectados.`);
+}
+
+async function gotoListadoConResiliencia(page, url, { retries }) {
+  const DEFAULT_TIMEOUT_MS = 30000; // requerido: setDefaultTimeout(30000) + esperas cortas
+  const NAV_TIMEOUT_MS = 60000; // requerido: máximo 60s por navegación
+
+  return await withRetries(
+    async (attempt) => {
+      const label = `Listado intento ${attempt}/${retries}`;
+      const t0 = Date.now();
+      console.log(`[${ts()}] ${label}: goto ${url}`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      console.log(`[${ts()}] ${label}: domcontentloaded en ${Date.now() - t0}ms`);
+
+      // Requerido: si en 30s no aparecen elementos/datos, fallar para forzar reload+retry.
+      await waitForResults(page, { timeoutMs: DEFAULT_TIMEOUT_MS });
+    },
+    {
+      retries,
+      onRetry: async (err, attempt) => {
+        console.warn(`[${ts()}] Listado falló (intento ${attempt}/${retries}): ${stringifyErr(err)}`);
+        await debugDumpPage(page);
+        console.warn(`[${ts()}] Recargando página y reintentando...`);
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+        } catch (e) {
+          console.warn(`[${ts()}] reload() falló: ${stringifyErr(e)}`);
+        }
+        await sleepRandom(600, 1400);
+      }
+    }
+  );
 }
 
 async function extractTotalResultados(page) {
@@ -385,13 +447,49 @@ async function upsertLicitacionItems(supabase, rows) {
 
 async function scrapeCompraDetallada(page, codigo) {
   const url = `https://buscador.mercadopublico.cl/ficha?code=${encodeURIComponent(codigo)}`;
-  await page.goto(url, { waitUntil: ['domcontentloaded', 'networkidle2'] });
+  const DEFAULT_TIMEOUT_MS = 30000;
+  const NAV_TIMEOUT_MS = 60000;
 
-  // Esperar a que cargue el texto clave o al menos el body
-  await page.waitForFunction(() => {
-    const t = (document.body && (document.body.innerText || document.body.textContent)) || '';
-    return /Listado de productos solicitados/i.test(t) || t.length > 200;
-  }, { timeout: config.resultsTimeoutMs });
+  // En vez de esperar 5 minutos, hacemos esperas cortas con reload.
+  await withRetries(
+    async (attempt) => {
+      const label = `Detalle ${codigo} intento ${attempt}/2`;
+      const t0 = Date.now();
+      console.log(`[${ts()}] ${label}: goto ${url}`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      console.log(`[${ts()}] ${label}: domcontentloaded en ${Date.now() - t0}ms`);
+
+      // Requerido: waitForFunction para detectar que ya hay datos.
+      await page.waitForFunction(() => {
+        const t = (document.body && (document.body.innerText || document.body.textContent)) || '';
+        const lower = String(t).toLowerCase();
+        if (lower.includes('access denied') || lower.includes('captcha') || lower.includes('robot')) return true;
+        return /Listado de productos solicitados/i.test(t) || t.length > 400;
+      }, { timeout: DEFAULT_TIMEOUT_MS, polling: 500 });
+
+      // Si hay señales de bloqueo, forzar error para que el retry haga reload.
+      const maybeBlocked = await page.evaluate(() => {
+        const t = (document.body && (document.body.innerText || document.body.textContent)) || '';
+        const lower = String(t).toLowerCase();
+        return lower.includes('access denied') || lower.includes('captcha') || lower.includes('robot');
+      });
+      if (maybeBlocked) throw new Error('Detectado posible bloqueo/WAF/captcha en detalle.');
+    },
+    {
+      retries: 2,
+      onRetry: async (err, attempt) => {
+        console.warn(`[${ts()}] Detalle ${codigo} falló (intento ${attempt}/2): ${stringifyErr(err)}`);
+        await debugDumpPage(page);
+        console.warn(`[${ts()}] Detalle ${codigo}: reload() y reintento...`);
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+        } catch (e) {
+          console.warn(`[${ts()}] Detalle ${codigo}: reload() falló: ${stringifyErr(e)}`);
+        }
+        await sleepRandom(600, 1400);
+      }
+    }
+  );
 
   const detalle = await page.evaluate(() => {
     const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
@@ -630,6 +728,8 @@ async function main() {
   });
   await page.setViewport({ width: 1440, height: 900 });
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
+  // Requerido: default timeout 30s para esperas/seletores/funciones.
+  page.setDefaultTimeout(30000);
   await page.setUserAgent(
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
@@ -655,20 +755,8 @@ async function main() {
       const url = buildUrl(currentPage, params);
       console.log(`[${new Date().toISOString()}] Página ${currentPage}${maxPages ? `/${maxPages}` : ''}: ${url}`);
 
-      await withRetries(
-        async () => {
-          await page.goto(url, { waitUntil: ['domcontentloaded', 'networkidle2'] });
-          await waitForResults(page);
-        },
-        {
-          retries: config.maxRetries,
-          onRetry: async (err, attempt) => {
-            console.warn(`Reintento navegación/espera (intento ${attempt}/${config.maxRetries}): ${String(err?.message || err)}`);
-            if (args.test) await debugDumpPage(page);
-            await sleepRandom(1500, 3000);
-          }
-        }
-      );
+      // Navegación/listado: fallar rápido con reintentos cortos + reload.
+      await gotoListadoConResiliencia(page, url, { retries: 2 });
 
       if (totalResultados == null) {
         totalResultados = await extractTotalResultados(page);
@@ -794,6 +882,7 @@ async function main() {
           });
           await detailPage.setViewport({ width: 1440, height: 900 });
           detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
+          detailPage.setDefaultTimeout(30000);
           await detailPage.setUserAgent(
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           );
@@ -807,7 +896,8 @@ async function main() {
             const detalle = await withRetries(
               async () => await scrapeCompraDetallada(detailPage, compra.codigo),
               {
-                retries: config.maxRetries,
+                // Detalle: reintentos cortos; el propio scrapeCompraDetallada ya hace reload+retry.
+                retries: 2,
                 onRetry: async (err, attempt) => {
                   console.warn(`Retry detalle (${compra.codigo}) intento ${attempt}/${config.maxRetries}: ${String(err?.message || err)}`);
                   await sleepRandom(1200, 2400);
