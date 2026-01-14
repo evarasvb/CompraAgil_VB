@@ -528,6 +528,9 @@ CREATE INDEX IF NOT EXISTS idx_oc_items_producto ON ordenes_compra_items(product
 -- =====================================================
 -- Nota: publicada_el/finaliza_el pueden venir vacíos desde scraping; se normalizan con NULLIF antes de castear.
 
+-- Si la vista existe con tipos distintos (timestamp vs timestamptz), OR REPLACE no puede cambiar tipos.
+DROP VIEW IF EXISTS oportunidades_all CASCADE;
+
 CREATE OR REPLACE VIEW oportunidades_all AS
 SELECT
   'compra_agil'::text AS tipo_proceso,
@@ -536,8 +539,8 @@ SELECT
   l.organismo,
   NULL::text AS descripcion,
   l.estado,
-  NULLIF(l.publicada_el, '')::timestamp AS fecha_publicacion,
-  NULLIF(l.finaliza_el, '')::timestamp AS fecha_cierre,
+  (NULLIF(l.publicada_el, '')::timestamp AT TIME ZONE 'America/Santiago') AS fecha_publicacion,
+  (NULLIF(l.finaliza_el, '')::timestamp AT TIME ZONE 'America/Santiago') AS fecha_cierre,
   l.link_detalle,
   l.presupuesto_estimado,
   l.categoria_match,
@@ -552,8 +555,8 @@ SELECT
   a.organismo,
   a.descripcion,
   a.estado,
-  a.fecha_publicacion,
-  a.fecha_cierre,
+  (a.fecha_publicacion AT TIME ZONE 'UTC') AS fecha_publicacion,
+  (a.fecha_cierre AT TIME ZONE 'UTC') AS fecha_cierre,
   a.link_detalle,
   a.presupuesto_estimado,
   NULL::text AS categoria_match,
@@ -642,13 +645,16 @@ COMMENT ON VIEW bi_oc_precios_producto_proveedor IS 'BI: comparación de precios
 -- CALENDARIO (eventos para compras ágiles + licitaciones grandes)
 -- =====================================================
 
+-- Si la vista existe con tipos distintos (timestamp vs timestamptz), OR REPLACE no puede cambiar tipos.
+DROP VIEW IF EXISTS calendario_eventos CASCADE;
+
 CREATE OR REPLACE VIEW calendario_eventos AS
 SELECT
   l.codigo AS codigo,
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'apertura'::text AS tipo_evento,
-  NULLIF(l.publicada_el, '')::timestamp AS fecha,
+  (NULLIF(l.publicada_el, '')::timestamp AT TIME ZONE 'America/Santiago') AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.publicada_el IS NOT NULL AND l.publicada_el <> ''
@@ -658,7 +664,7 @@ SELECT
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'cierre'::text AS tipo_evento,
-  NULLIF(l.finaliza_el, '')::timestamp AS fecha,
+  (NULLIF(l.finaliza_el, '')::timestamp AT TIME ZONE 'America/Santiago') AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
@@ -668,7 +674,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'apertura'::text AS tipo_evento,
-  a.fecha_publicacion AS fecha,
+  (a.fecha_publicacion AT TIME ZONE 'UTC') AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_publicacion IS NOT NULL
@@ -678,7 +684,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'cierre'::text AS tipo_evento,
-  a.fecha_cierre AS fecha,
+  (a.fecha_cierre AT TIME ZONE 'UTC') AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_cierre IS NOT NULL
