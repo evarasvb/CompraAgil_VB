@@ -441,36 +441,20 @@ CREATE INDEX IF NOT EXISTS idx_oc_last_scraped_at ON ordenes_compra(last_scraped
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS pending_extension_sync (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- tipo de tarea: lic_detail, lic_list, oc_detail, oc_list, etc.
+  id SERIAL PRIMARY KEY,
   kind TEXT NOT NULL,
-  -- identificador natural (ej: codigo licitación, numero OC, fecha)
   identifier TEXT NOT NULL,
   url TEXT,
   reason TEXT,
   context JSONB,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  last_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  status TEXT NOT NULL DEFAULT 'pending', -- pending|done|failed
+  status TEXT DEFAULT 'pending',
+  attempts INT DEFAULT 0,
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  last_attempt_at TIMESTAMPTZ,
   completed_at TIMESTAMP WITH TIME ZONE,
   last_error TEXT,
-  payload JSONB,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-
-  UNIQUE(kind, identifier)
+  payload JSONB
 );
-
-COMMENT ON TABLE pending_extension_sync IS 'Cola de registros a recuperar vía extensión Chrome cuando API/Puppeteer son bloqueados.';
-COMMENT ON COLUMN pending_extension_sync.kind IS 'Tipo de tarea: oc_detail/lic_detail/etc.';
-COMMENT ON COLUMN pending_extension_sync.identifier IS 'Clave del registro a sincronizar (codigo/numero_oc/fecha).';
-COMMENT ON COLUMN pending_extension_sync.attempts IS 'Cantidad de veces que se intentó (API/Puppeteer) antes de dejar pendiente.';
-COMMENT ON COLUMN pending_extension_sync.status IS 'Estado de la tarea para la extensión: pending/done/failed.';
-COMMENT ON COLUMN pending_extension_sync.completed_at IS 'Timestamp cuando la tarea quedó completada.';
-
-CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_kind ON pending_extension_sync(kind);
-CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_last_attempt ON pending_extension_sync(last_attempt_at DESC);
-CREATE INDEX IF NOT EXISTS idx_pending_extension_sync_status ON pending_extension_sync(status);
 
 -- =====================================================
 -- MONITOREO: HEALTH LOG DE SCRAPERS
@@ -489,6 +473,8 @@ CREATE TABLE IF NOT EXISTS scraper_health_log (
 
 COMMENT ON TABLE scraper_health_log IS 'Log de salud de scrapers (status, duración, items, errores) para monitoreo y alertas.';
 CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
+
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS duracion_ms INTEGER;
 
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
