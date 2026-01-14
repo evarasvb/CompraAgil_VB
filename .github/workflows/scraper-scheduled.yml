@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   scrape:
-    name: Ejecutar scraper incremental
+    name: Ejecutar scraper (FULL, sin incremental)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           npx puppeteer browsers install chrome
 
-      - name: Ejecutar scraper (incremental)
+      - name: Ejecutar scraper (FULL)
         working-directory: mercadopublico-scraper
         shell: bash
         run: |
@@ -112,8 +112,8 @@ jobs:
           echo "Iniciando scraper..."
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.headed }}" == "true" ]]; then
             # Solo para debug: abre navegador (puede fallar en runners sin display)
-            node scraper.js --incremental --headed
+            node scraper.js --no-incremental --headed
           else
-            node scraper.js --incremental
+            node scraper.js --no-incremental
           fi
 

@@ -46,8 +46,8 @@ jobs:
           set -euo pipefail
           echo "SUPABASE_URL=${SUPABASE_URL}" > .env
           echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
-          echo "INCREMENTAL_MODE=true" >> .env
-          echo "MAX_PAGES=5" >> .env
+          echo "INCREMENTAL_MODE=false" >> .env
+          echo "MAX_PAGES=auto" >> .env
           echo ".env creado con $(wc -l < .env) variables."
 
       - name: Instalar dependencias
@@ -60,4 +60,4 @@ jobs:
 
       - name: Ejecutar scraper
         working-directory: mercadopublico-scraper
-        run: node scraper.js
+        run: node scraper.js --no-incremental
