@@ -56,6 +56,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "Aplicando schema.sql a Supabase (sin imprimir credenciales)..."
+          # Forzar IPv4: algunos runners no tienen salida IPv6 y Supabase puede resolver primero a AAAA.
+          host="$(echo "$SUPABASE_DB_URL" | sed -E 's#^[^@]+@([^:/?]+).*#\1#')"
+          if [[ -n "${host:-}" ]]; then
+            hostaddr="$(getent ahostsv4 "$host" | awk '{print $1; exit}' || true)"
+            if [[ -n "${hostaddr:-}" ]]; then
+              echo "Usando IPv4 $hostaddr para host $host"
+              PGHOSTADDR="$hostaddr" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
+              echo "OK: schema aplicado."
+              exit 0
+            fi
+          fi
+          echo "::warning::No se pudo resolver IPv4 para el host. Intentando conexión estándar..."
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
           echo "OK: schema aplicado."
 
