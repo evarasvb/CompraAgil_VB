@@ -501,7 +501,7 @@ BEGIN
     BEGIN
       ALTER TABLE ordenes_compra
         ADD CONSTRAINT ordenes_compra_numero_oc_unique UNIQUE (numero_oc);
-    EXCEPTION WHEN duplicate_object THEN
+    EXCEPTION WHEN duplicate_object OR duplicate_table THEN
       NULL;
     END;
 
@@ -509,7 +509,7 @@ BEGIN
       ALTER TABLE ordenes_compra_items
         ADD CONSTRAINT ordenes_compra_items_numero_oc_fkey
         FOREIGN KEY (numero_oc) REFERENCES ordenes_compra(numero_oc) ON DELETE CASCADE;
-    EXCEPTION WHEN duplicate_object THEN
+    EXCEPTION WHEN duplicate_object OR duplicate_table THEN
       NULL;
     END;
   END IF;
