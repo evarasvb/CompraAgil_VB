@@ -35,7 +35,7 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
       # Modo incremental (requerido por este workflow)
-      INCREMENTAL_MODE: "true"
+      INCREMENTAL_MODE: "false"
 
       # Por defecto, procesar todas las páginas necesarias según total/15.
       # Puedes sobreescribir en ejecución manual con el input max_pages.
