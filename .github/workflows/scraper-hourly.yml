@@ -25,14 +25,15 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_URL:-}" ]]; then
             echo "::error::Falta el secret SUPABASE_URL."
             exit 1
           fi
-          if [[ -z "${SUPABASE_KEY:-}" ]]; then
-            echo "::error::Falta el secret SUPABASE_KEY."
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta SUPABASE_SERVICE_KEY o SUPABASE_KEY."
             exit 1
           fi
 
@@ -42,10 +43,15 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
           echo "SUPABASE_URL=${SUPABASE_URL}" > .env
-          echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          if [[ -n "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}" >> .env
+          else
+            echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          fi
           echo "INCREMENTAL_MODE=true" >> .env
           echo "MAX_PAGES=5" >> .env
           echo ".env creado con $(wc -l < .env) variables."

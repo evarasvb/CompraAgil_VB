@@ -33,6 +33,7 @@ jobs:
       # Secrets (requeridos)
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
       # Modo incremental (requerido por este workflow)
       INCREMENTAL_MODE: "true"
@@ -71,8 +72,8 @@ jobs:
             echo "::error::Falta el secret SUPABASE_URL (Settings → Secrets and variables → Actions)."
             exit 1
           fi
-          if [[ -z "${SUPABASE_KEY:-}" ]]; then
-            echo "::error::Falta el secret SUPABASE_KEY (Settings → Secrets and variables → Actions)."
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta SUPABASE_SERVICE_KEY o SUPABASE_KEY (Settings → Secrets and variables → Actions)."
             exit 1
           fi
           echo "Secrets OK (no se imprime su contenido)."
@@ -83,7 +84,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "SUPABASE_URL=${SUPABASE_URL}" > .env
-          echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          # Preferimos service key para poder encolar en pending_extension_sync incluso con RLS restrictivo.
+          if [[ -n "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}" >> .env
+          else
+            echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          fi
           echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
           echo "MAX_PAGES=$MAX_PAGES" >> .env
           echo ".env creado con $(wc -l < .env) variables."

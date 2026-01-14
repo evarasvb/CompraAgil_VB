@@ -304,7 +304,7 @@ async function extractComprasFromPage(page) {
 
 function getSupabaseClientOrNull({ allowNull }) {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY;
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 
   if (!url || !key) {
     if (allowNull) return null;
@@ -314,6 +314,71 @@ function getSupabaseClientOrNull({ allowNull }) {
   return createClient(url, key, {
     auth: { persistSession: false }
   });
+}
+
+async function upsertPendingExtensionSync(supabase, row) {
+  if (!supabase) return;
+  const now = new Date().toISOString();
+  const kind = String(row.kind || '').trim();
+  const identifier = String(row.identifier || '').trim();
+  if (!kind || !identifier) return;
+
+  try {
+    const existing = await supabase
+      .from('pending_extension_sync')
+      .select('id, attempts')
+      .eq('kind', kind)
+      .eq('identifier', identifier)
+      .maybeSingle();
+
+    if (existing.error) {
+      console.warn(`[compra-agil] warning: no pude consultar pending_extension_sync (${kind}/${identifier}): ${existing.error.message}`);
+      return;
+    }
+
+    if (existing.data?.id) {
+      const attempts = Number(existing.data.attempts || 0) + 1;
+      const upd = await supabase
+        .from('pending_extension_sync')
+        .update({
+          url: row.url || null,
+          reason: row.reason || null,
+          context: row.context || null,
+          status: 'pending',
+          completed_at: null,
+          last_error: null,
+          payload: null,
+          attempts,
+          last_attempt_at: now
+        })
+        .eq('id', existing.data.id);
+      if (upd.error) console.warn(`[compra-agil] warning: no pude actualizar pending_extension_sync: ${upd.error.message}`);
+    } else {
+      const ins = await supabase.from('pending_extension_sync').insert({
+        kind,
+        identifier,
+        url: row.url || null,
+        reason: row.reason || null,
+        context: row.context || null,
+        status: 'pending',
+        attempts: 1,
+        first_seen_at: now,
+        last_attempt_at: now
+      });
+      if (ins.error) console.warn(`[compra-agil] warning: no pude insertar pending_extension_sync: ${ins.error.message}`);
+    }
+  } catch (e) {
+    console.warn(`[compra-agil] warning: excepción en pending_extension_sync: ${String(e?.message || e)}`);
+  }
+}
+
+function shouldEnqueueForExtension(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  // timeouts típicos de puppeteer
+  if (msg.includes('timeout') || msg.includes('waiting failed')) return true;
+  // navegación bloqueada / challenge
+  if (msg.includes('net::err') || msg.includes('navigation')) return true;
+  return false;
 }
 
 async function debugDumpPage(page) {
@@ -618,20 +683,41 @@ async function main() {
       const url = buildUrl(currentPage, params);
       console.log(`[${new Date().toISOString()}] Página ${currentPage}${maxPages ? `/${maxPages}` : ''}: ${url}`);
 
-      await withRetries(
-        async () => {
-          await page.goto(url, { waitUntil: 'networkidle2' });
-          await waitForResults(page);
-        },
-        {
-          retries: config.maxRetries,
-          onRetry: async (err, attempt) => {
-            console.warn(`Reintento navegación/espera (intento ${attempt}/${config.maxRetries}): ${String(err?.message || err)}`);
-            if (args.test) await debugDumpPage(page);
-            await sleepRandom(1500, 3000);
+      try {
+        await withRetries(
+          async () => {
+            await page.goto(url, { waitUntil: 'networkidle2' });
+            await waitForResults(page);
+          },
+          {
+            retries: config.maxRetries,
+            onRetry: async (err, attempt) => {
+              console.warn(`Reintento navegación/espera (intento ${attempt}/${config.maxRetries}): ${String(err?.message || err)}`);
+              if (args.test) await debugDumpPage(page);
+              await sleepRandom(1500, 3000);
+            }
           }
+        );
+      } catch (navErr) {
+        // Si MercadoPublico bloquea (timeouts/challenge), encolar para extensión y cortar la corrida.
+        if (!dryRun && supabase && shouldEnqueueForExtension(navErr)) {
+          console.warn(`[FALLBACK] Bloqueo/timeout en listado. Encolando para extensión: ${url}`);
+          await upsertPendingExtensionSync(supabase, {
+            kind: 'compra_agil_list',
+            identifier: `${params.date_from}|${params.date_to}|page=${currentPage}`.slice(0, 200),
+            url,
+            reason: String(navErr?.message || navErr).slice(0, 500),
+            context: { phase: 'compra_agil_list', page: currentPage, params }
+          });
+          await logSystemEvent('WARNING', 'SCRAPER', 'Bloqueo/timeout en listado: encolado para extensión', {
+            page: currentPage,
+            url,
+            error: String(navErr?.message || navErr)
+          });
+          break;
         }
-      );
+        throw navErr;
+      }
 
       if (totalResultados == null) {
         totalResultados = await extractTotalResultados(page);
@@ -820,6 +906,26 @@ async function main() {
           } finally {
             await detailPage.close();
           }
+        }).catch(async (detailErr) => {
+          // Si detalle falla por bloqueo/timeout, encolar para extensión para recuperar desde navegador real.
+          if (!dryRun && supabase && shouldEnqueueForExtension(detailErr)) {
+            const detailUrl = `https://buscador.mercadopublico.cl/ficha?code=${encodeURIComponent(compra.codigo)}`;
+            console.warn(`[FALLBACK] Detalle bloqueado/timeout. Encolando para extensión: ${compra.codigo}`);
+            await upsertPendingExtensionSync(supabase, {
+              kind: 'compra_agil_detail',
+              identifier: String(compra.codigo).slice(0, 200),
+              url: detailUrl,
+              reason: String(detailErr?.message || detailErr).slice(0, 500),
+              context: { phase: 'compra_agil_detail', codigo: compra.codigo }
+            });
+            await logSystemEvent('WARNING', 'SCRAPER', 'Bloqueo/timeout en detalle: encolado para extensión', {
+              codigo: compra.codigo,
+              url: detailUrl,
+              error: String(detailErr?.message || detailErr)
+            });
+            return;
+          }
+          throw detailErr;
         })
       );
 
