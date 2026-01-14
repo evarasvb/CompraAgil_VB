@@ -56,18 +56,25 @@ jobs:
         run: |
           set -euo pipefail
           echo "Aplicando schema.sql a Supabase (sin imprimir credenciales)..."
-          # Forzar IPv4: algunos runners no tienen salida IPv6 y Supabase puede resolver primero a AAAA.
-          host="$(echo "$SUPABASE_DB_URL" | sed -E 's#^[^@]+@([^:/?]+).*#\1#')"
+          # Nota: GitHub-hosted runners suelen no tener conectividad IPv6. Si el host resuelve solo a AAAA,
+          # la conexión fallará con "Network is unreachable". En ese caso, usa el connection string de
+          # "Connection pooling" (pooler) de Supabase como SUPABASE_DB_URL (normalmente IPv4).
+          host="$(python3 - <<'PY'
+import os
+from urllib.parse import urlparse
+u=os.environ.get("SUPABASE_DB_URL","")
+print(urlparse(u).hostname or "")
+PY
+)"
           if [[ -n "${host:-}" ]]; then
-            hostaddr="$(getent ahostsv4 "$host" | awk '{print $1; exit}' || true)"
-            if [[ -n "${hostaddr:-}" ]]; then
-              echo "Usando IPv4 $hostaddr para host $host"
-              PGHOSTADDR="$hostaddr" psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
-              echo "OK: schema aplicado."
-              exit 0
+            ipv4="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}' || true)"
+            ipv6="$(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1; exit}' || true)"
+            echo "DB host: $host (ipv4=${ipv4:-none} ipv6=${ipv6:-none})"
+            if [[ -z "${ipv4:-}" && -n "${ipv6:-}" ]]; then
+              echo "::error::El host de SUPABASE_DB_URL resuelve solo a IPv6. Cambia SUPABASE_DB_URL al string de Connection Pooling (pooler.supabase.com) en Supabase → Project Settings → Database → Connection pooling."
+              exit 2
             fi
           fi
-          echo "::warning::No se pudo resolver IPv4 para el host. Intentando conexión estándar..."
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
           echo "OK: schema aplicado."
 
