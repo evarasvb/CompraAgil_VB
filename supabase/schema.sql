@@ -301,17 +301,24 @@ CREATE TRIGGER trigger_check_match
 
 -- Vista: Licitaciones con alto potencial (match > 70%)
 CREATE OR REPLACE VIEW licitaciones_con_match AS
-SELECT 
+SELECT
   l.*,
-  COUNT(i.id) as total_items,
-  COUNT(i.id) FILTER (WHERE i.match_confidence >= 70) as items_con_match,
-  AVG(i.match_confidence) as match_confidence_promedio,
-  SUM(i.precio_total_sugerido) as monto_total_estimado
+  agg.total_items,
+  agg.items_con_match,
+  agg.match_confidence_promedio,
+  agg.monto_total_estimado
 FROM licitaciones l
-LEFT JOIN licitacion_items i ON l.codigo = i.licitacion_codigo
+LEFT JOIN LATERAL (
+  SELECT
+    COUNT(*) AS total_items,
+    COUNT(*) FILTER (WHERE i.match_confidence >= 70) AS items_con_match,
+    AVG(i.match_confidence) AS match_confidence_promedio,
+    SUM(i.precio_total_sugerido) AS monto_total_estimado
+  FROM licitacion_items i
+  WHERE i.licitacion_codigo = l.codigo
+) agg ON TRUE
 WHERE l.match_encontrado = TRUE
-GROUP BY l.codigo
-ORDER BY match_confidence_promedio DESC, l.presupuesto_estimado DESC;
+ORDER BY agg.match_confidence_promedio DESC NULLS LAST, l.presupuesto_estimado DESC NULLS LAST;
 
 COMMENT ON VIEW licitaciones_con_match IS 'Licitaciones con al menos un producto en inventario';
 
