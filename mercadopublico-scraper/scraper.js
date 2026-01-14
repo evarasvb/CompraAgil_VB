@@ -567,6 +567,7 @@ async function main() {
 
   const browser = await puppeteer.launch({
     headless: isHeadless ? 'new' : false,
+        protocolTimeout: 300000, // 5 minutos para evitar timeout de protocolo
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
