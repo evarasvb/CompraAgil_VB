@@ -661,12 +661,6 @@ async function main() {
 
       console.log(`Extraídas ${compras.length} compras en la página ${currentPage}`);
 
-      await logSystemEvent('INFO', 'SCRAPER', `Se encontraron ${compras.length} compras en página ${currentPage}`, {
-        page: currentPage,
-        maxPages: maxPages || null,
-        incremental: incrementalMode
-      });
-
       if (args.testSimple) {
         // Modo “empezar simple”: sin Supabase ni detalle
         const codigos = compras.map((c) => c.codigo).filter(Boolean);
@@ -841,6 +835,10 @@ async function main() {
       currentPage += 1;
       await sleepRandom(config.delayBetweenPagesMs.min, config.delayBetweenPagesMs.max);
     }
+    await logSystemEvent('INFO', 'SCRAPER', `Se encontraron ${allCompras.length} licitaciones`, {
+      totalResultados: totalResultados ?? null,
+      incremental: incrementalMode
+    });
     await logSystemEvent('SUCCESS', 'SCRAPER', 'Ciclo finalizado correctamente (Compra Ágil)', {
       processed: allCompras.length,
       totalResultados: totalResultados ?? null,
