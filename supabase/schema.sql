@@ -574,6 +574,7 @@ COMMENT ON VIEW calendario_eventos IS 'Eventos (apertura/cierre) para calendario
 -- =====================================================
 -- (touch) Trigger apply-schema workflow after SUPABASE_DB_URL is configured.
 -- (touch 2) Trigger after IPv4 fix.
+-- (touch 3) Trigger apply-schema after switching SUPABASE_DB_URL to pooler.
 
 -- Para verificar que todo se creó correctamente:
 SELECT 
