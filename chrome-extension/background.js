@@ -1,5 +1,9 @@
 // Manifest V3 service worker
 // Integra la extensión con pending_sync_server (GET /api/pending-sync, POST /api/pending-sync/complete)
+//
+// Nota MV3:
+// - NO uses setInterval para polling: el service worker “duerme” y se mata.
+// - chrome.alarms es el mecanismo recomendado. PeriodInMinutes mínimo ~1 minuto.
 
 const DEFAULT_PENDING_SYNC_URL = 'https://tu-servidor.com';
 
@@ -33,6 +37,8 @@ async function fetchJson(url, { method = 'GET', headers, body } = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${JSON.stringify(json).slice(0, 500)}`);
   return json;
 }
+
+let isRunning = false;
 
 async function withTab(url, fn) {
   const tab = await chrome.tabs.create({ url, active: false });
@@ -104,55 +110,67 @@ async function injectAndScrape(tabId, task) {
 }
 
 async function processPendingSyncTasks() {
+  if (isRunning) return;
+  isRunning = true;
   const { PENDING_SYNC_URL, PENDING_SYNC_API_KEY } = await getConfig();
-  if (!PENDING_SYNC_URL) return;
+  if (!PENDING_SYNC_URL) {
+    isRunning = false;
+    return;
+  }
 
   const headers = buildHeaders(PENDING_SYNC_API_KEY);
   const listUrl = new URL('/api/pending-sync', PENDING_SYNC_URL);
   listUrl.searchParams.set('limit', '5');
 
-  const { items } = await fetchJson(listUrl.toString(), { headers });
-  if (!Array.isArray(items) || !items.length) return;
+  try {
+    const data = await fetchJson(listUrl.toString(), { headers });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) return;
 
-  for (const task of items) {
-    const taskUrl = task.url;
-    if (!taskUrl) continue;
+    for (const task of items) {
+      const taskUrl = task.url;
+      if (!taskUrl) continue;
 
-    try {
-      const scrapeResult = await withTab(taskUrl, async (tabId) => {
-        return await injectAndScrape(tabId, task);
-      });
-
-      if (!scrapeResult?.ok) {
-        const errMsg = scrapeResult?.error || 'scrape_failed';
-        await fetchJson(new URL('/api/pending-sync/complete', PENDING_SYNC_URL).toString(), {
-          method: 'POST',
-          headers,
-          body: { id: task.id, status: 'failed', last_error: errMsg }
-        });
-        continue;
-      }
-
-      await fetchJson(new URL('/api/pending-sync/complete', PENDING_SYNC_URL).toString(), {
-        method: 'POST',
-        headers,
-        body: { id: task.id, payload: scrapeResult.payload }
-      });
-    } catch (e) {
-      // Best-effort: marcar failed si se puede
       try {
+        const scrapeResult = await withTab(taskUrl, async (tabId) => {
+          return await injectAndScrape(tabId, task);
+        });
+
+        if (!scrapeResult?.ok) {
+          const errMsg = scrapeResult?.error || 'scrape_failed';
+          await fetchJson(new URL('/api/pending-sync/complete', PENDING_SYNC_URL).toString(), {
+            method: 'POST',
+            headers,
+            body: { id: task.id, status: 'failed', last_error: errMsg }
+          });
+          continue;
+        }
+
         await fetchJson(new URL('/api/pending-sync/complete', PENDING_SYNC_URL).toString(), {
           method: 'POST',
           headers,
-          body: { id: task.id, status: 'failed', last_error: String(e?.message || e) }
+          body: { id: task.id, payload: scrapeResult.payload }
         });
-      } catch (_) {}
+      } catch (e) {
+        // Best-effort: marcar failed si se puede
+        try {
+          await fetchJson(new URL('/api/pending-sync/complete', PENDING_SYNC_URL).toString(), {
+            method: 'POST',
+            headers,
+            body: { id: task.id, status: 'failed', last_error: String(e?.message || e) }
+          });
+        } catch (_) {}
+      }
     }
+  } finally {
+    isRunning = false;
   }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create('pending-sync-check', { periodInMinutes: 5 });
+  // MV3: periodInMinutes mínimo ~1; 30s no es soportado por alarms.
+  chrome.alarms.create('pending-sync-check', { periodInMinutes: 1 });
+  processPendingSyncTasks();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
