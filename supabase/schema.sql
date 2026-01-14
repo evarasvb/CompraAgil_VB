@@ -440,10 +440,27 @@ CREATE TABLE IF NOT EXISTS ordenes_compra (
 
 COMMENT ON TABLE ordenes_compra IS 'Órdenes de compra (cabecera) para análisis histórico';
 
+-- Migración idempotente (si la tabla existe con schema distinto)
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS numero_oc TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS numero_licitacion TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS demandante TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS rut_demandante TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS unidad_compra TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS fecha_envio_oc TIMESTAMP;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS estado TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS proveedor TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS rut_proveedor TEXT;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS neto NUMERIC;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS iva NUMERIC;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS total NUMERIC;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS subtotal NUMERIC;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS raw_json JSONB;
+ALTER TABLE ordenes_compra ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+
 -- Ítems/líneas OC
 CREATE TABLE IF NOT EXISTS ordenes_compra_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  numero_oc TEXT REFERENCES ordenes_compra(numero_oc) ON DELETE CASCADE,
+  numero_oc TEXT,
   codigo_producto TEXT,
   producto TEXT,
   cantidad NUMERIC,
@@ -458,6 +475,45 @@ CREATE TABLE IF NOT EXISTS ordenes_compra_items (
 );
 
 COMMENT ON TABLE ordenes_compra_items IS 'Detalle/líneas de órdenes de compra (para BI y análisis de precios)';
+
+-- Migración idempotente (si la tabla existe con schema distinto)
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS numero_oc TEXT;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS codigo_producto TEXT;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS producto TEXT;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS cantidad NUMERIC;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS unidad TEXT;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS descuento NUMERIC;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS cargos NUMERIC;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS valor_total NUMERIC;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS especificaciones TEXT;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS raw_json JSONB;
+ALTER TABLE ordenes_compra_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+
+-- FK opcional (solo si es posible): evitar romper el apply si la tabla existente tiene PK distinta
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'ordenes_compra' AND column_name = 'numero_oc'
+  ) THEN
+    BEGIN
+      ALTER TABLE ordenes_compra
+        ADD CONSTRAINT ordenes_compra_numero_oc_unique UNIQUE (numero_oc);
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END;
+
+    BEGIN
+      ALTER TABLE ordenes_compra_items
+        ADD CONSTRAINT ordenes_compra_items_numero_oc_fkey
+        FOREIGN KEY (numero_oc) REFERENCES ordenes_compra(numero_oc) ON DELETE CASCADE;
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END;
+  END IF;
+END $$;
 
 -- Índices recomendados para BI
 CREATE INDEX IF NOT EXISTS idx_oc_fecha_envio ON ordenes_compra(fecha_envio_oc);
