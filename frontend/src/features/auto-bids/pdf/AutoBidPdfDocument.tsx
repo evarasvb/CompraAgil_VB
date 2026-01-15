@@ -63,3 +63,4 @@ export function AutoBidPdfDocument({
   )
 }
 
+export { AutoBidPdfDocument as CotizacionPDF }

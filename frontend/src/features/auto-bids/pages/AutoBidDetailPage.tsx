@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { BlobProvider, PDFViewer } from '@react-pdf/renderer'
 import toast from 'react-hot-toast'
 import {
   createAutoBidItem,
@@ -13,6 +14,7 @@ import type { AutoBid, AutoBidItem, ConductaPago } from '../types'
 import { AutoBidItemsTable } from '../components/AutoBidItemsTable'
 import { EditItemModal } from '../components/EditItemModal'
 import { TotalsSidebar } from '../components/TotalsSidebar'
+import { CotizacionPDF } from '../pdf/AutoBidPdfDocument'
 
 export function AutoBidDetailPage() {
   const { id } = useParams()
@@ -26,6 +28,7 @@ export function AutoBidDetailPage() {
   const [savingItemId, setSavingItemId] = useState<string | null>(null)
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
   const [addingItem, setAddingItem] = useState(false)
+  const [pdfOpen, setPdfOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -163,7 +166,10 @@ export function AutoBidDetailPage() {
             >
               {editable ? 'Salir edición' : 'Editar'}
             </button>
-            <button className="rounded-md border px-3 py-2 text-xs font-semibold hover:bg-slate-50">
+            <button
+              className="rounded-md border px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+              onClick={() => setPdfOpen(true)}
+            >
               Previsualizar PDF
             </button>
             <button className="rounded-md border px-3 py-2 text-xs font-semibold hover:bg-slate-50">
@@ -317,6 +323,42 @@ export function AutoBidDetailPage() {
           })()
         }}
       />
+
+      {pdfOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setPdfOpen(false)} />
+          <div className="relative flex w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">Previsualización PDF</div>
+              <div className="flex items-center gap-2">
+                <BlobProvider document={<CotizacionPDF bid={bid} items={items} />}>
+                  {({ url, loading }) => (
+                    <a
+                      className="rounded-md border px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                      href={url ?? undefined}
+                      download={`oferta-${bid.codigo_proceso}.pdf`}
+                    >
+                      {loading ? 'Generando…' : 'Descargar'}
+                    </a>
+                  )}
+                </BlobProvider>
+                <button
+                  className="rounded-md border px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                  onClick={() => setPdfOpen(false)}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            <div className="h-[75vh] bg-slate-100">
+              <PDFViewer style={{ width: '100%', height: '100%' }}>
+                <CotizacionPDF bid={bid} items={items} />
+              </PDFViewer>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
