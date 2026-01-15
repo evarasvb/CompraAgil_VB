@@ -485,6 +485,14 @@ CREATE TABLE IF NOT EXISTS instituciones (
   rut TEXT PRIMARY KEY,
   nombre TEXT,
   division TEXT,
+  codigo_entidad TEXT,
+  sector TEXT,
+  sitio_web TEXT,
+  telefono TEXT,
+  correo TEXT,
+  domicilio_legal TEXT,
+  region TEXT,
+  comuna TEXT,
 
   -- Métricas derivadas (ej. desde ordenes_compra)
   oc_total INTEGER,
@@ -493,6 +501,9 @@ CREATE TABLE IF NOT EXISTS instituciones (
 
   -- Campos reservados para futuros scrapers (si se logra extraer desde MercadoPublico)
   conducta_pago TEXT,
+  pago_promedio_dias INTEGER,
+  pago_sigfe BOOLEAN,
+  pago_actualizado_el TIMESTAMP WITH TIME ZONE,
   reclamos_total INTEGER,
   reclamos_ultima_fecha TIMESTAMP WITH TIME ZONE,
 

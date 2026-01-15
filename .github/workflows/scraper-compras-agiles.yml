@@ -143,6 +143,13 @@ jobs:
           set -euo pipefail
           node instituciones_enrich.js --input "${{ steps.run.outputs.tmp_json }}"
 
+      - name: Enriquecer instituciones (ficha comprador)
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node comprador_ficha_enrich.js --input "${{ steps.run.outputs.tmp_json }}"
+
       - name: Limpiar archivo temporal
         if: always()
         shell: bash
