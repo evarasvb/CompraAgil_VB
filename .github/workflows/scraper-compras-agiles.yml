@@ -2,8 +2,26 @@ name: Scraper Compras Ágiles (API Client)
 
 on:
   schedule:
-    - cron: '0 * * * *' # Cada hora en punto (UTC)
+    # Diario (UTC). Usa "ayer" por defecto.
+    - cron: '20 6 * * *'
   workflow_dispatch:
+    inputs:
+      from:
+        description: "Fecha desde (YYYY-MM-DD). Default: ayer (UTC)"
+        required: false
+        default: ""
+      to:
+        description: "Fecha hasta (YYYY-MM-DD). Default: misma que from"
+        required: false
+        default: ""
+      pages:
+        description: "Páginas a procesar (entero). Default: 1"
+        required: false
+        default: "1"
+      max_ficha:
+        description: "Máximo de fichas a descargar (entero). Default: vacío (sin límite)"
+        required: false
+        default: ""
 
 jobs:
   scrape:
@@ -73,10 +91,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          FROM_IN="${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}"
+          TO_IN="${{ github.event_name == 'workflow_dispatch' && inputs.to || '' }}"
+          PAGES_IN="${{ github.event_name == 'workflow_dispatch' && inputs.pages || '1' }}"
+          MAX_FICHA_IN="${{ github.event_name == 'workflow_dispatch' && inputs.max_ficha || '' }}"
+
           YESTERDAY="$(date -u -d 'yesterday' +%F)"
+          FROM="${FROM_IN:-$YESTERDAY}"
+          TO="${TO_IN:-$FROM}"
           TMP_JSON="$(mktemp)"
-          echo "from/to=${YESTERDAY}"
-          npm run api-client -- --from "${YESTERDAY}" --to "${YESTERDAY}" --status all --include-ficha > "${TMP_JSON}"
+          echo "from=${FROM} to=${TO} pages=${PAGES_IN} max_ficha=${MAX_FICHA_IN:-<none>}"
+
+          args=(--from "${FROM}" --to "${TO}" --pages "${PAGES_IN}" --status all --include-ficha)
+          if [[ -n "${MAX_FICHA_IN:-}" ]]; then
+            args+=(--max-ficha "${MAX_FICHA_IN}")
+          fi
+
+          # Retry simple (API puede fallar transitoriamente)
+          max=3
+          for i in $(seq 1 $max); do
+            echo "Intento $i/$max: npm run api-client"
+            if npm run api-client -- "${args[@]}" > "${TMP_JSON}"; then
+              break
+            fi
+            if [[ "$i" -lt "$max" ]]; then
+              sleep_s=$((10 * (2 ** (i-1))))
+              echo "Fallo intento $i. Esperando ${sleep_s}s..."
+              sleep "$sleep_s"
+            else
+              echo "::error::api-client falló $max veces seguidas."
+              exit 1
+            fi
+          done
+
+          # Validar que sea JSON parseable
+          node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log("JSON OK");' "${TMP_JSON}"
           echo "tmp_json=${TMP_JSON}" >> "$GITHUB_OUTPUT"
           echo "Bytes JSON: $(wc -c < "${TMP_JSON}")"
 
