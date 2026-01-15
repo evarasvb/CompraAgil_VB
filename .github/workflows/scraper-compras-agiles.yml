@@ -22,10 +22,6 @@ on:
         description: "Máximo de fichas a descargar (entero). Default: vacío (sin límite)"
         required: false
         default: ""
-  # Disparo automático SOLO para esta rama (workaround cuando no hay permisos de dispatch manual).
-  push:
-    branches:
-      - cursor/workflow-cliente-api-f83f
 
 jobs:
   scrape:
