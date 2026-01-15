@@ -1,0 +1,91 @@
+name: Refresh Instituciones (cada 15 días aprox)
+
+on:
+  # No existe "cada 15 días" exacto en cron; usamos 1 y 16 de cada mes.
+  schedule:
+    - cron: '35 6 1,16 * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Refrescar instituciones con updated_at older than N días"
+        required: false
+        default: "15"
+      limit:
+        description: "Máximo de instituciones a refrescar por corrida"
+        required: false
+        default: "200"
+      concurrency:
+        description: "Concurrencia de llamadas a APIs comprador"
+        required: false
+        default: "5"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+
+      - name: Validar secrets Supabase
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_SERVICE_KEY o SUPABASE_KEY."
+            exit 1
+          fi
+
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SUPABASE_URL=${SUPABASE_URL}" > .env
+          if [[ -n "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}" >> .env
+          fi
+          if [[ -n "${SUPABASE_KEY:-}" ]]; then
+            echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          fi
+          echo ".env creado con $(wc -l < .env) variables."
+
+      - name: Instalar dependencias (sin Chromium)
+        working-directory: mercadopublico-scraper
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+
+      - name: Refresh instituciones (comprador)
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          DAYS="${{ github.event_name == 'workflow_dispatch' && inputs.days || '15' }}"
+          LIMIT="${{ github.event_name == 'workflow_dispatch' && inputs.limit || '200' }}"
+          CONCURRENCY="${{ github.event_name == 'workflow_dispatch' && inputs.concurrency || '5' }}"
+          node comprador_ficha_refresh.js --days "${DAYS}" --limit "${LIMIT}" --concurrency "${CONCURRENCY}"
+
