@@ -114,8 +114,8 @@ jobs:
           # Retry simple (API puede fallar transitoriamente)
           max=3
           for i in $(seq 1 $max); do
-            echo "Intento $i/$max: npm run api-client"
-            if npm run api-client -- "${args[@]}" > "${TMP_JSON}"; then
+            echo "Intento $i/$max: node api-client.js"
+            if node api-client.js "${args[@]}" > "${TMP_JSON}"; then
               break
             fi
             if [[ "$i" -lt "$max" ]]; then
