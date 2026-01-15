@@ -1,4 +1,5 @@
-require('dotenv').config();
+// Mantener salida JSON limpia: suprimir logs de dotenv
+require('dotenv').config({ quiet: true });
 
 /**
  * Cliente API interno del buscador de Compras Ágiles (sin Puppeteer).
@@ -21,6 +22,10 @@ const ORIGIN = 'https://buscador.mercadopublico.cl';
 
 function ts() {
   return new Date().toISOString();
+}
+
+function logErr(msg) {
+  process.stderr.write(`${msg}\n`);
 }
 
 function parseArgs(argv) {
@@ -182,7 +187,7 @@ async function main() {
       keywords: args.keywords
     });
 
-    console.log(`[${ts()}] GET ${apiBase}/compra-agil?${queryString}`);
+    logErr(`[${ts()}] GET ${apiBase}/compra-agil?${queryString}`);
     const resp = await searchCompraAgil({ apiBase, headers, timeoutMs: args.timeoutMs, queryString });
 
     const payload = resp?.payload || {};
@@ -205,7 +210,7 @@ async function main() {
     for (const it of slice) {
       const codigo = it?.codigo;
       if (!codigo) continue;
-      console.log(`[${ts()}] GET ${apiBase}/compra-agil?action=ficha&code=${codigo}`);
+      logErr(`[${ts()}] GET ${apiBase}/compra-agil?action=ficha&code=${codigo}`);
       const ficha = await fetchFichaCompraAgil({
         apiBase,
         headers,
@@ -239,7 +244,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`[${ts()}] Error:`, err?.message || err);
+  logErr(`[${ts()}] Error: ${err?.message || String(err)}`);
   process.exitCode = 1;
 });
 
