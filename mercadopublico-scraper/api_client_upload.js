@@ -244,6 +244,7 @@ async function main() {
   const nowIso = toIsoNow();
   const licRows = [];
   const itemRows = [];
+  const instRowsByRut = new Map();
 
   for (const r of resultados) {
     const codigo = toStringOrNull(r?.codigo);
@@ -252,9 +253,26 @@ async function main() {
     const lic = mapToLicitacionRow({ resultado: r, ficha, nowIso });
     if (lic) licRows.push(lic);
     if (ficha) itemRows.push(...mapToItemRows({ codigo, ficha }));
+
+    // Institución (básico). Enriquecimientos adicionales van en otro script/tabla.
+    const inst = ficha?.informacion_institucion || null;
+    const rut = toStringOrNull(inst?.rut_organismo_comprador);
+    if (rut) {
+      instRowsByRut.set(rut, {
+        rut,
+        nombre: toStringOrNull(inst?.organismo_comprador) || toStringOrNull(r?.organismo) || null,
+        division: toStringOrNull(inst?.division) || toStringOrNull(r?.unidad) || null,
+        last_seen_at: nowIso,
+        updated_at: nowIso
+      });
+    }
   }
 
-  log(`Preparado: licitaciones=${licRows.length}, items=${itemRows.length}, dryRun=${args.dryRun ? 'true' : 'false'}`);
+  log(
+    `Preparado: licitaciones=${licRows.length}, items=${itemRows.length}, instituciones=${instRowsByRut.size}, dryRun=${
+      args.dryRun ? 'true' : 'false'
+    }`
+  );
 
   if (args.dryRun) return;
 
@@ -275,6 +293,23 @@ async function main() {
     });
   }
   log('Upsert OK: licitacion_items');
+
+  // Upsert instituciones (opcional; si la tabla no existe, no fallar el job)
+  if (instRowsByRut.size) {
+    const instRows = Array.from(instRowsByRut.values());
+    try {
+      for (const batch of chunkArray(instRows, 200)) {
+        await upsertWithFallback(supabase, { tables: ['instituciones'], rows: batch, onConflict: 'rut' });
+      }
+      log('Upsert OK: instituciones');
+    } catch (e) {
+      if (isMissingTableError(e)) {
+        logErr("Warning: tabla 'instituciones' no existe; se omite upsert de instituciones.");
+      } else {
+        throw e;
+      }
+    }
+  }
 }
 
 main().catch((err) => {

@@ -136,6 +136,13 @@ jobs:
           set -euo pipefail
           node api_client_upload.js --input "${{ steps.run.outputs.tmp_json }}"
 
+      - name: Enriquecer instituciones (métricas internas)
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node instituciones_enrich.js --input "${{ steps.run.outputs.tmp_json }}"
+
       - name: Limpiar archivo temporal
         if: always()
         shell: bash

@@ -477,6 +477,36 @@ CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health
 ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS duracion_ms INTEGER;
 
 -- =====================================================
+-- INSTITUCIONES (compradores) - ENRIQUECIMIENTO
+-- =====================================================
+-- Nota: algunos datos (reclamos/conducta de pago) pueden venir de fuentes externas.
+-- Esta tabla permite ir acumulando métricas por institución (RUT).
+CREATE TABLE IF NOT EXISTS instituciones (
+  rut TEXT PRIMARY KEY,
+  nombre TEXT,
+  division TEXT,
+
+  -- Métricas derivadas (ej. desde ordenes_compra)
+  oc_total INTEGER,
+  oc_monto_total NUMERIC,
+  oc_ultima_fecha TIMESTAMP WITH TIME ZONE,
+
+  -- Campos reservados para futuros scrapers (si se logra extraer desde MercadoPublico)
+  conducta_pago TEXT,
+  reclamos_total INTEGER,
+  reclamos_ultima_fecha TIMESTAMP WITH TIME ZONE,
+
+  meta JSONB,
+  last_seen_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE instituciones IS 'Instituciones compradoras (RUT) con métricas/enriquecimiento (OC, reclamos, conducta de pago, etc.)';
+CREATE INDEX IF NOT EXISTS idx_instituciones_oc_total ON instituciones(oc_total DESC);
+CREATE INDEX IF NOT EXISTS idx_instituciones_last_seen ON instituciones(last_seen_at DESC);
+
+-- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
 -- =====================================================
 
