@@ -908,6 +908,169 @@ ORDER BY precio_prom DESC;
 COMMENT ON VIEW bi_oc_precios_producto_proveedor IS 'BI: comparación de precios unitarios por proveedor para un producto';
 
 -- =====================================================
+-- CONDUCTA DE PAGO (DIFERENCIADOR FIRMA VB)
+-- Basado en `ordenes_compra.raw_json` + `estado`
+-- =====================================================
+
+-- Parser tolerante de timestamps (evita que una fecha rara rompa la vista)
+CREATE OR REPLACE FUNCTION safe_timestamp(p_text TEXT)
+RETURNS TIMESTAMP
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF p_text IS NULL OR btrim(p_text) = '' THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    RETURN p_text::timestamp;
+  EXCEPTION WHEN others THEN
+    BEGIN
+      -- Formato observado común en integraciones: "DD-MM-YYYY HH:MM:SS"
+      RETURN to_timestamp(p_text, 'DD-MM-YYYY HH24:MI:SS')::timestamp;
+    EXCEPTION WHEN others THEN
+      BEGIN
+        -- Variante con "/" en vez de "-"
+        RETURN to_timestamp(p_text, 'DD/MM/YYYY HH24:MI:SS')::timestamp;
+      EXCEPTION WHEN others THEN
+        BEGIN
+          -- Solo fecha (sin hora)
+          RETURN to_timestamp(p_text, 'DD-MM-YYYY')::timestamp;
+        EXCEPTION WHEN others THEN
+          RETURN NULL;
+        END;
+      END;
+    END;
+  END;
+END;
+$$;
+
+COMMENT ON FUNCTION safe_timestamp IS 'Parsea timestamps de manera tolerante; retorna NULL si no puede parsear.';
+
+-- Vista: timeline/fechas de OC extraídas desde raw_json (si existen)
+-- Nota: los nombres exactos de las claves pueden variar; por eso se usa COALESCE con alternativas.
+CREATE OR REPLACE VIEW oc_timeline AS
+SELECT
+  oc.*,
+  f.fecha_aceptacion,
+  f.fecha_recepcion_conforme,
+  f.fecha_facturacion,
+  f.fecha_pago,
+  CASE
+    WHEN oc.fecha_envio_oc IS NOT NULL AND f.fecha_pago IS NOT NULL
+      THEN (f.fecha_pago::date - oc.fecha_envio_oc::date)
+    ELSE NULL
+  END AS dias_envio_a_pago,
+  CASE
+    WHEN f.fecha_aceptacion IS NOT NULL AND f.fecha_pago IS NOT NULL
+      THEN (f.fecha_pago::date - f.fecha_aceptacion::date)
+    ELSE NULL
+  END AS dias_aceptacion_a_pago,
+  CASE
+    WHEN lower(coalesce(oc.estado, '')) LIKE '%pagad%' THEN TRUE
+    WHEN f.fecha_pago IS NOT NULL THEN TRUE
+    ELSE FALSE
+  END AS probable_pagada
+FROM ordenes_compra oc
+CROSS JOIN LATERAL (
+  SELECT
+    safe_timestamp(
+      COALESCE(
+        oc.raw_json->>'FechaAceptacion',
+        oc.raw_json->>'fecha_aceptacion',
+        oc.raw_json->'Fechas'->>'FechaAceptacion',
+        oc.raw_json->'Fechas'->>'Aceptacion',
+        oc.raw_json->'fechas'->>'FechaAceptacion',
+        oc.raw_json->'fechas'->>'Aceptacion'
+      )
+    ) AS fecha_aceptacion,
+    safe_timestamp(
+      COALESCE(
+        oc.raw_json->>'FechaRecepcionConforme',
+        oc.raw_json->>'fecha_recepcion_conforme',
+        oc.raw_json->'Fechas'->>'FechaRecepcionConforme',
+        oc.raw_json->'Fechas'->>'RecepcionConforme',
+        oc.raw_json->'fechas'->>'FechaRecepcionConforme',
+        oc.raw_json->'fechas'->>'RecepcionConforme'
+      )
+    ) AS fecha_recepcion_conforme,
+    safe_timestamp(
+      COALESCE(
+        oc.raw_json->>'FechaFacturacion',
+        oc.raw_json->>'FechaFactura',
+        oc.raw_json->>'fecha_facturacion',
+        oc.raw_json->'Fechas'->>'FechaFacturacion',
+        oc.raw_json->'Fechas'->>'FechaFactura',
+        oc.raw_json->'fechas'->>'FechaFacturacion',
+        oc.raw_json->'fechas'->>'FechaFactura'
+      )
+    ) AS fecha_facturacion,
+    safe_timestamp(
+      COALESCE(
+        oc.raw_json->>'FechaPago',
+        oc.raw_json->>'FechaPagada',
+        oc.raw_json->>'fecha_pago',
+        oc.raw_json->'Fechas'->>'FechaPago',
+        oc.raw_json->'Fechas'->>'FechaPagada',
+        oc.raw_json->'Fechas'->>'Pago',
+        oc.raw_json->'fechas'->>'FechaPago',
+        oc.raw_json->'fechas'->>'FechaPagada',
+        oc.raw_json->'fechas'->>'Pago'
+      )
+    ) AS fecha_pago
+) f;
+
+COMMENT ON VIEW oc_timeline IS 'Órdenes de compra con fechas extraídas desde raw_json (aceptación/recepción/facturación/pago) + métricas de días.';
+
+-- Vista: conducta de pago por institución compradora (demandante)
+CREATE OR REPLACE VIEW conducta_pago_institucion AS
+SELECT
+  rut_demandante,
+  demandante,
+  COUNT(*) AS oc_total,
+  COUNT(*) FILTER (WHERE probable_pagada = TRUE) AS oc_probablemente_pagadas,
+  COUNT(*) FILTER (WHERE fecha_pago IS NOT NULL) AS oc_con_fecha_pago,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE probable_pagada = TRUE) / NULLIF(COUNT(*), 0), 2) AS pct_oc_probablemente_pagadas,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE fecha_pago IS NOT NULL) / NULLIF(COUNT(*), 0), 2) AS pct_oc_con_fecha_pago,
+
+  AVG(dias_envio_a_pago) FILTER (WHERE dias_envio_a_pago IS NOT NULL) AS dias_envio_a_pago_prom,
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY dias_envio_a_pago) FILTER (WHERE dias_envio_a_pago IS NOT NULL) AS dias_envio_a_pago_p50,
+  percentile_cont(0.9) WITHIN GROUP (ORDER BY dias_envio_a_pago) FILTER (WHERE dias_envio_a_pago IS NOT NULL) AS dias_envio_a_pago_p90,
+
+  SUM(COALESCE(total, 0)) AS monto_total,
+  SUM(COALESCE(total, 0)) FILTER (WHERE probable_pagada = TRUE) AS monto_probablemente_pagado,
+  ROUND(
+    100.0 * SUM(COALESCE(total, 0)) FILTER (WHERE probable_pagada = TRUE) / NULLIF(SUM(COALESCE(total, 0)), 0),
+    2
+  ) AS pct_monto_probablemente_pagado,
+
+  MAX(fecha_envio_oc) AS ultima_oc_fecha_envio,
+
+  -- Score simple 0..100 (mientras más días p90, peor)
+  CASE
+    WHEN percentile_cont(0.9) WITHIN GROUP (ORDER BY dias_envio_a_pago) FILTER (WHERE dias_envio_a_pago IS NOT NULL) IS NULL
+      THEN NULL
+    ELSE GREATEST(
+      0,
+      LEAST(
+        100,
+        ROUND(
+          100 - (
+            (percentile_cont(0.9) WITHIN GROUP (ORDER BY dias_envio_a_pago) FILTER (WHERE dias_envio_a_pago IS NOT NULL))::numeric
+            * 100 / 120
+          ),
+          0
+        )::int
+      )
+    )
+  END AS score_pago_0_100
+FROM oc_timeline
+GROUP BY rut_demandante, demandante
+ORDER BY score_pago_0_100 DESC NULLS LAST, monto_total DESC;
+
+COMMENT ON VIEW conducta_pago_institucion IS 'Conducta de pago por institución: % pagada, días a pago (prom/p50/p90) y score 0..100.';
+
+-- =====================================================
 -- CALENDARIO (eventos para compras ágiles + licitaciones grandes)
 -- =====================================================
 

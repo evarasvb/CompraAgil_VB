@@ -160,6 +160,8 @@ En `supabase/schema.sql` se incluyen vistas listas para dashboard con filtros:
 - `oportunidades_all`: unifica **compras ágiles** (scraping) + **licitaciones grandes** (API) con `tipo_proceso`.
 - `calendario_eventos`: eventos de apertura/cierre para ambos tipos.
 - `oc_enriquecidas`: órdenes con `tipo_origen` (compra_agil/licitation/desconocido).
+- `oc_timeline`: órdenes de compra con fechas extraídas desde `raw_json` (si existen) y métricas de días a pago.
+- `conducta_pago_institucion`: conducta de pago por institución (p50/p90 días, % pagadas, score 0..100).
 - `bi_oc_negocios_por_institucion`
 - `bi_oc_negocios_por_proveedor`
 - `bi_oc_productos`
