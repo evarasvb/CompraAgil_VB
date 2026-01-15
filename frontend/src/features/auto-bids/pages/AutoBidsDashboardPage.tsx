@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '../../../lib/supabase'
+import { requireSupabase } from '../../../lib/supabase'
 import { formatCLP } from '../../../lib/money'
 import { AutoBidCard } from '../components/AutoBidCard'
 import { AutoBidsFilters, type AutoBidsFiltersValue } from '../components/AutoBidsFilters'
@@ -15,34 +15,6 @@ const defaultFilters: AutoBidsFiltersValue = {
   orden: 'cierre_asc',
 }
 
-const demoData: AutoBidDashboardRow[] = [
-  {
-    id: 'demo-1',
-    tipo_proceso: 'compra_agil',
-    codigo_proceso: '1161266-3-COT26',
-    titulo: 'ADQUISICIÓN DE AGENDAS 2026',
-    organismo: 'I MUNICIPALIDAD DE TUCAPEL',
-    rut_institucion: '69.999.999-9',
-    departamento: 'Abastecimiento',
-    unidad_compra: 'Unidad de Compra',
-    descripcion: 'Compra ágil para agendas 2026',
-    convocatoria: 'primer_llamado',
-    fecha_publicacion: new Date().toISOString(),
-    fecha_cierre: new Date(Date.now() + 6 * 36e5).toISOString(),
-    presupuesto_total: 300000,
-    moneda: 'CLP',
-    estado: 'pendiente',
-    total_neto: 210000,
-    iva: 39900,
-    total: 249900,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    total_items: 13,
-    items_emparejados: 9,
-    match_percent: 69.23,
-  },
-]
-
 export function AutoBidsDashboardPage() {
   const [filters, setFilters] = useState<AutoBidsFiltersValue>(defaultFilters)
   const [rows, setRows] = useState<AutoBidDashboardRow[] | null>(null)
@@ -54,8 +26,12 @@ export function AutoBidsDashboardPage() {
     async function load() {
       setError(null)
 
-      if (!supabase) {
-        setRows(demoData)
+      let supabase
+      try {
+        supabase = requireSupabase()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error de configuración Supabase')
+        setRows([])
         return
       }
 
@@ -68,7 +44,7 @@ export function AutoBidsDashboardPage() {
 
       if (error) {
         setError(error.message)
-        setRows(demoData)
+        setRows([])
         return
       }
 
@@ -127,16 +103,13 @@ export function AutoBidsDashboardPage() {
             <span className="font-semibold text-slate-900">{formatCLP(metrics.presupuestoAcumulado)}</span>
           </div>
         </div>
-        <div className="text-xs text-slate-500">
-          {supabase ? 'Conectado a Supabase' : 'Modo demo (configurar VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)'}
-        </div>
       </div>
 
       <AutoBidsFilters value={filters} onChange={setFilters} />
 
       {error ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Error al cargar desde Supabase: <span className="font-mono">{error}</span>. Mostrando datos demo.
+          Error al cargar desde Supabase: <span className="font-mono">{error}</span>.
         </div>
       ) : null}
 

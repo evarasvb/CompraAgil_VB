@@ -1,55 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { supabase } from '../../../lib/supabase'
+import { requireSupabase } from '../../../lib/supabase'
 import { formatCLP } from '../../../lib/money'
 import type { AutoBid, AutoBidItem, ConductaPago } from '../types'
 import { AutoBidItemsTable } from '../components/AutoBidItemsTable'
 import { EditItemModal } from '../components/EditItemModal'
 import { TotalsSidebar } from '../components/TotalsSidebar'
-
-const demoBid: AutoBid = {
-  id: 'demo-1',
-  tipo_proceso: 'compra_agil',
-  codigo_proceso: '1161266-3-COT26',
-  titulo: 'ADQUISICIÓN DE AGENDAS 2026',
-  organismo: 'I MUNICIPALIDAD DE TUCAPEL',
-  rut_institucion: '69.999.999-9',
-  departamento: 'Abastecimiento',
-  unidad_compra: 'Unidad de Compra',
-  descripcion: 'Detalle de compra ágil',
-  convocatoria: 'primer_llamado',
-  fecha_publicacion: new Date().toISOString(),
-  fecha_cierre: new Date(Date.now() + 6 * 36e5).toISOString(),
-  presupuesto_total: 300000,
-  moneda: 'CLP',
-  estado: 'pendiente',
-  total_neto: 0,
-  iva: 0,
-  total: 0,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-}
-
-const demoItems: AutoBidItem[] = [
-  {
-    id: 'demo-item-1',
-    auto_bid_id: 'demo-1',
-    item_index: 1,
-    requerimiento: 'AGENDA CLÁSICA AÑO 2026 RHEIN O SIMILAR',
-    inventario_producto_id: 'SKU-123',
-    match_confidence: 92,
-    match_method: 'fuzzy',
-    nombre_oferta: 'Agenda 2026 Rhein',
-    sku: 'SKU-123',
-    proveedor: 'Proveedor Demo',
-    cantidad: 30,
-    unidad: 'Unidades',
-    precio_unitario: 7000,
-    imagen_url: null,
-    ficha_tecnica_url: null,
-    notas: null,
-  },
-]
 
 export function AutoBidDetailPage() {
   const { id } = useParams()
@@ -69,19 +25,14 @@ export function AutoBidDetailPage() {
 
       if (!id) return
 
-      if (!supabase) {
-        setBid(demoBid)
-        setItems(demoItems)
-        setConducta({
-          id: 'demo-cp',
-          rut_institucion: demoBid.rut_institucion,
-          institucion: demoBid.organismo,
-          unidad_compra: demoBid.unidad_compra,
-          periodo: '2026-01-01',
-          dias_promedio_pago: 28,
-          porcentaje_morosidad: 6.5,
-          muestras: 120,
-        })
+      let supabase
+      try {
+        supabase = requireSupabase()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error de configuración Supabase')
+        setBid(null)
+        setItems([])
+        setConducta(null)
         return
       }
 
@@ -89,8 +40,8 @@ export function AutoBidDetailPage() {
       if (cancelled) return
       if (bidError) {
         setError(bidError.message)
-        setBid(demoBid)
-        setItems(demoItems)
+        setBid(null)
+        setItems([])
         return
       }
       setBid(bidData as AutoBid)
@@ -120,7 +71,12 @@ export function AutoBidDetailPage() {
     let cancelled = false
 
     async function loadConducta() {
-      if (!supabase) return
+      let supabase
+      try {
+        supabase = requireSupabase()
+      } catch {
+        return
+      }
       if (!bid) return
 
       const rut = bid.rut_institucion?.trim()
@@ -150,15 +106,13 @@ export function AutoBidDetailPage() {
     return { estadoLabel }
   }, [bid])
 
-  if (!bid) {
-    return <div className="text-sm text-slate-600">Cargando…</div>
-  }
+  if (!bid) return <div className="text-sm text-slate-600">{error ? 'No se pudo cargar la oferta.' : 'Cargando…'}</div>
 
   return (
     <div className="space-y-4">
       {error ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Error: <span className="font-mono">{error}</span>. (La vista puede estar en modo demo.)
+          Error: <span className="font-mono">{error}</span>.
         </div>
       ) : null}
 
