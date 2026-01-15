@@ -1,0 +1,158 @@
+name: Scraper Compras Ágiles + Matcher Automático
+
+on:
+  schedule:
+    # Cada hora (UTC). Si necesitas hora local, ajusta el cron.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Número de páginas a procesar (ej: 1, 5) o 'auto' para calcular."
+        required: false
+        default: "auto"
+      headed:
+        description: "Ejecutar con navegador visible (solo para debug; normalmente false)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: mercadopublico-scraper-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scrape-and-match:
+    name: Ejecutar scraper y matcher
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      # Secrets (requeridos)
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+      # Modo incremental (requerido por este workflow)
+      INCREMENTAL_MODE: "true"
+
+      # Por defecto, procesar todas las páginas necesarias según total/15.
+      # Puedes sobreescribir en ejecución manual con el input max_pages.
+      MAX_PAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_pages || 'auto' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: mercadopublico-scraper/package.json
+
+      - name: Mostrar contexto de ejecución
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fecha (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "Evento: $GITHUB_EVENT_NAME"
+          echo "Repositorio: $GITHUB_REPOSITORY"
+          echo "Ref: $GITHUB_REF"
+          echo "MAX_PAGES=$MAX_PAGES"
+          echo "INCREMENTAL_MODE=$INCREMENTAL_MODE"
+
+      - name: Validar secrets requeridos
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_KEY (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_DB_URL (Settings → Secrets and variables → Actions)."
+            echo "   Necesitas la URL de conexión directa a PostgreSQL de Supabase."
+            echo "   Formato: postgresql://postgres:[password]@[host]:5432/postgres"
+            exit 1
+          fi
+          
+          # Verificar que SUPABASE_KEY sea service_role (no anon)
+          KEY_ROLE=$(echo "$SUPABASE_KEY" | cut -d'.' -f2 | base64 -d 2>/dev/null | grep -o '"role":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+          if [[ "$KEY_ROLE" != "service_role" ]]; then
+            echo "::warning::SUPABASE_KEY parece ser '$KEY_ROLE' en lugar de 'service_role'"
+            echo "   El scraper necesita service_role_key para bypass RLS."
+            echo "   Ve a Supabase Dashboard → Settings → API → service_role key"
+          else
+            echo "✅ SUPABASE_KEY es service_role (correcto para scraper)"
+          fi
+          
+          echo "Secrets OK (no se imprime su contenido)."
+
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+          echo "INCREMENTAL_MODE=$INCREMENTAL_MODE" >> .env
+          echo "MAX_PAGES=$MAX_PAGES" >> .env
+          echo ".env creado con $(wc -l < .env) variables."
+
+      - name: Instalar Chromium para Puppeteer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+          echo "Chromium instalado: $(chromium-browser --version)"
+
+      - name: Instalar dependencias Node.js
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm install
+
+      - name: Ejecutar scraper (incremental)
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Iniciando scraper..."
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.headed }}" == "true" ]]; then
+            # Solo para debug: abre navegador (puede fallar en runners sin display)
+            node scraper.js --incremental --headed
+          else
+            node scraper.js --incremental
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pandas psycopg2-binary openpyxl requests
+
+      - name: Run Python Matcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "🔄 Ejecutando matcher en modo base de datos..."
+          python run_matcher.py --mode=db --days=1 --min-confidence=0.5
+          echo "✅ Matcher completado"

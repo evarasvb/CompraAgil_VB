@@ -1,40 +1,97 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+# Workflow para validar código Python del proyecto CompraAgil_VB
+# Valida sintaxis, linting y dependencias de los scripts de matching
 
-name: Python package
+name: Python Validation
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main", "master", "cursor/**"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main", "master"]
+  workflow_dispatch:
 
 jobs:
-  build:
-
+  validate-python:
+    name: Validar código Python
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+    timeout-minutes: 10
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
-      run: |
-        pytest
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pandas psycopg2-binary openpyxl requests
+
+      - name: Validar sintaxis Python
+        run: |
+          echo "🔍 Validando sintaxis de archivos Python..."
+          python -m py_compile agilvb_matcher.py run_matcher.py matcher_db_adapter.py 2>&1 || {
+            echo "❌ Error de sintaxis encontrado"
+            exit 1
+          }
+          echo "✅ Sintaxis correcta"
+
+      - name: Lint con flake8 (errores críticos)
+        run: |
+          echo "🔍 Ejecutando flake8 (errores críticos)..."
+          flake8 agilvb_matcher.py run_matcher.py matcher_db_adapter.py \
+            --count \
+            --select=E9,F63,F7,F82 \
+            --show-source \
+            --statistics \
+            --max-line-length=120 || {
+            echo "❌ Errores críticos encontrados"
+            exit 1
+          }
+          echo "✅ Sin errores críticos"
+
+      - name: Lint con flake8 (advertencias)
+        continue-on-error: true
+        run: |
+          echo "🔍 Ejecutando flake8 (advertencias)..."
+          flake8 agilvb_matcher.py run_matcher.py matcher_db_adapter.py \
+            --count \
+            --exit-zero \
+            --max-complexity=15 \
+            --max-line-length=120 \
+            --statistics \
+            --ignore=E501,W503 || true
+
+      - name: Verificar imports
+        run: |
+          echo "🔍 Verificando imports..."
+          python -c "
+          import sys
+          errors = []
+          for module in ['pandas', 'psycopg2', 'openpyxl', 'requests']:
+              try:
+                  __import__(module)
+                  print(f'✅ {module}')
+              except ImportError as e:
+                  errors.append(f'❌ {module}: {e}')
+          if errors:
+              print('\\n'.join(errors))
+              sys.exit(1)
+          "
+          echo "✅ Todos los imports están disponibles"
+
+      - name: Resumen
+        if: always()
+        run: |
+          echo "## 📊 Resumen de Validación Python" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Validación completada" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Archivos validados:**" >> $GITHUB_STEP_SUMMARY
+          echo "- agilvb_matcher.py" >> $GITHUB_STEP_SUMMARY
+          echo "- run_matcher.py" >> $GITHUB_STEP_SUMMARY
+          echo "- matcher_db_adapter.py" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,154 @@
+[dotenv@17.2.3] injecting env (4) from .env -- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops
+Usando Chrome del sistema: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+[2026-01-15T18:16:18.505Z] Página 1/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=1&region=all&status=2
+Total resultados detectado: 301
+Extraídas 5 compras en la página 1
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:16:40.858Z] Página 2/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=2&region=all&status=2
+Extraídas 5 compras en la página 2
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:16:58.090Z] Página 3/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=3&region=all&status=2
+Extraídas 5 compras en la página 3
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:17:17.927Z] Página 4/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=4&region=all&status=2
+Extraídas 5 compras en la página 4
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:17:38.240Z] Página 5/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=5&region=all&status=2
+Extraídas 5 compras en la página 5
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:17:59.045Z] Página 6/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=6&region=all&status=2
+Extraídas 5 compras en la página 6
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:18:17.243Z] Página 7/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=7&region=all&status=2
+Extraídas 5 compras en la página 7
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:18:36.450Z] Página 8/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=8&region=all&status=2
+Extraídas 5 compras en la página 8
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:18:54.758Z] Página 9/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=9&region=all&status=2
+Extraídas 5 compras en la página 9
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+[2026-01-15T18:19:13.895Z] Página 10/10: https://buscador.mercadopublico.cl/compra-agil?date_from=2025-12-09&date_to=2026-01-08&order_by=recent&page_number=10&region=all&status=2
+Extraídas 5 compras en la página 10
+Upsert OK: 5 filas en 'licitaciones'.
+Error al sincronizar a compras_agiles: Could not find the 'link_oficial' column of 'compras_agiles' in the schema cache
+Sincronización OK: 5 filas en 'compras_agiles'.
+Error al guardar items en Supabase (1057509-11-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057509-11-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (584105-2-COT26): new row violates row-level security policy for table "licitacion_items"
+Error al guardar items en Supabase (812030-14-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (584105-2-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Tabla 'licitacion_documentos' no disponible o falló inserción (812030-14-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057501-44-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057501-44-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Error al guardar items en Supabase (1057430-22-COT26): new row violates row-level security policy for table "licitacion_items"
+Tabla 'licitacion_documentos' no disponible o falló inserción (1057430-22-COT26): new row violates row-level security policy for table "licitacion_documentos"
+Finalizado. Compras únicas vistas (memoria): 5. Total resultados detectado: 301. Incremental=OFF.

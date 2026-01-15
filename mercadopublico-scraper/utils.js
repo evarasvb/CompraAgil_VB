@@ -9,12 +9,25 @@ function parseDateCL(dateStr) {
 }
 
 function parseBudgetCLP(budgetStr) {
-  // "$ 300.000" / "$300.000" -> 300000
+  // "$ 300.000" / "$300.000" / "6.500.000" -> 300000 o 6500000
   if (!budgetStr) return null;
-  const digits = String(budgetStr).replace(/[^0-9]/g, '');
+  const cleaned = String(budgetStr).trim();
+  
+  // Buscar patrón con puntos como separadores de miles (formato chileno)
+  // Ejemplo: "6.500.000" o "$ 6.500.000"
+  const match = cleaned.match(/(?:Presupuesto\s+estimado\s+)?\$?\s*([\d\.]+)/);
+  if (match) {
+    // Remover puntos y convertir a número
+    const digits = match[1].replace(/\./g, '');
+    const n = Number.parseInt(digits, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  
+  // Fallback: extraer todos los dígitos (sin puntos)
+  const digits = cleaned.replace(/[^0-9]/g, '');
   if (!digits) return null;
   const n = Number.parseInt(digits, 10);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function splitOrganismoDepartamento(raw) {

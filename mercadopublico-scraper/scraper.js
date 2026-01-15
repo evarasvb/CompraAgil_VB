@@ -15,6 +15,10 @@ require('dotenv').config();
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+
+// Utilidades de Node.js
+const path = require('path');
+const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 const config = require('./config');
@@ -213,30 +217,91 @@ async function extractComprasFromPage(page) {
       const dateRe = /\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g;
       const fechas = blob.match(dateRe) || [];
 
-      // Estado (badge verde): suele contener "Publicada"
-      const estado = lines.find((l) => /Publicada/i.test(l)) || '';
+      // Extraer información de manera más robusta
+      // Buscar patrones específicos en el texto completo
+      
+      // Estado: buscar "Publicada" seguido de texto descriptivo
+      const estadoMatch = blob.match(/Publicada\s+([^\.]+?)(?:\.|$)/i);
+      const estado = estadoMatch ? `Publicada ${estadoMatch[1].trim()}` : (lines.find((l) => /Publicada/i.test(l)) || '');
 
-      // Título: heurística: primera línea "larga" que no sea código/fechas/presupuesto/labels
-      const presupuestoLine = lines.find((l) => /\$\s*\d/.test(l)) || '';
-      const titleCandidate = lines.find((l) => {
-        if (!l) return false;
-        if (l === codigo) return false;
-        if (dateRe.test(l)) return false;
-        if (/\$\s*\d/.test(l)) return false;
-        if (/Publicada/i.test(l)) return false;
-        if (/Publicada el|Finaliza el|Presupuesto|Organismo/i.test(l)) return false;
-        return l.length >= 8;
-      }) || '';
+      // Presupuesto: buscar "$ X.XXX.XXX" o "Presupuesto estimado $ X"
+      // Formato chileno: "6.500.000" o "$ 6.500.000"
+      const presupuestoMatch = blob.match(/Presupuesto\s+estimado\s+\$\s*([\d\.]+)/i) || blob.match(/\$\s*([\d]{1,3}(?:\.[\d]{3}){1,})/);
+      const presupuestoLine = presupuestoMatch ? `$ ${presupuestoMatch[1]}` : (lines.find((l) => /\$\s*[\d\.]+/.test(l)) || '');
 
-      // Publicada/Finaliza: si hay 2 fechas, asumir [0]=publicada, [1]=finaliza
-      const publicada_el = fechas[0] || '';
-      const finaliza_el = fechas[1] || '';
+      // Título: buscar texto después del código y antes de "Publicada el"
+      const codigoIndex = blob.indexOf(codigo);
+      const publicadaIndex = blob.indexOf('Publicada el');
+      let titleCandidate = '';
+      if (codigoIndex >= 0 && publicadaIndex > codigoIndex) {
+        const titleSection = blob.substring(codigoIndex + codigo.length, publicadaIndex).trim();
+        // Limpiar el título: quitar "Segundo llamado", números, etc.
+        const titleLines = titleSection.split('\n').map(l => l.trim()).filter(Boolean);
+        titleCandidate = titleLines.find((l) => {
+          if (!l || l.length < 10) return false;
+          if (/^\d+/.test(l)) return false; // No empieza con número
+          if (/Segundo\s+llamado|Tercer\s+llamado/i.test(l)) return false;
+          if (dateRe.test(l)) return false;
+          if (/\$\s*\d/.test(l)) return false;
+          return true;
+        }) || titleLines[0] || '';
+      }
+      
+      // Si no encontramos título, usar heurística de líneas
+      if (!titleCandidate) {
+        titleCandidate = lines.find((l) => {
+          if (!l || l.length < 10) return false;
+          if (l === codigo) return false;
+          if (dateRe.test(l)) return false;
+          if (/\$\s*\d/.test(l)) return false;
+          if (/Publicada/i.test(l)) return false;
+          if (/Publicada el|Finaliza el|Presupuesto|Organismo|Segundo llamado|Tercer llamado/i.test(l)) return false;
+          if (/^[A-Z]{2,6}\d+$/.test(l)) return false; // Solo código
+          return true;
+        }) || '';
+      }
 
-      // Organismo + departamento: línea con " - " (la más parecida)
-      const orgLine =
-        lines.find((l) => l.includes(' - ') && l.length > 15) ||
-        lines.find((l) => /MUNICIPALIDAD|MINISTERIO|SERVICIO|GOBIERNO|HOSPITAL|UNIVERSIDAD/i.test(l)) ||
-        '';
+      // Publicada/Finaliza: buscar patrones específicos
+      const publicadaMatch = blob.match(/Publicada\s+el\s+(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i);
+      const finalizaMatch = blob.match(/Finaliza\s+el\s+(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i);
+      const publicada_el = publicadaMatch ? publicadaMatch[1] : (fechas[0] || '');
+      const finaliza_el = finalizaMatch ? finalizaMatch[1] : (fechas[1] || '');
+
+      // Organismo + departamento: buscar después de "Presupuesto estimado"
+      let orgLine = '';
+      const presupuestoMatchForOrg = blob.match(/Presupuesto\s+estimado\s+\$\s*[\d\.]+/i);
+      if (presupuestoMatchForOrg) {
+        const afterPresupuesto = blob.substring(presupuestoMatchForOrg.index + presupuestoMatchForOrg[0].length);
+        // Buscar organismo que empiece con mayúscula después del presupuesto
+        const orgMatch = afterPresupuesto.match(/\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]+?)(?:\s+-\s+([A-ZÁÉÍÓÚÑ][^\.]+?))?(?:\s+Recibiendo|\s*$)/);
+        if (orgMatch) {
+          const org = orgMatch[1].trim();
+          const dept = orgMatch[2] ? orgMatch[2].trim() : '';
+          orgLine = dept ? `${org} - ${dept}` : org;
+        }
+      }
+      
+      // Fallback: buscar línea con " - " y palabras clave de organismos
+      if (!orgLine) {
+        for (const l of lines) {
+          if (l.includes(' - ') && l.length > 15) {
+            const hasOrgKeyword = /MUNICIPALIDAD|MINISTERIO|SERVICIO|GOBIERNO|HOSPITAL|UNIVERSIDAD|SUBSECRETARIA|SERVICIO|ENERGIA/i.test(l);
+            if (hasOrgKeyword && !/Publicada|Finaliza|Presupuesto|Revisar detalle/i.test(l)) {
+              orgLine = l;
+              break;
+            }
+          }
+        }
+      }
+      
+      // Último fallback: buscar cualquier línea con palabras clave de organismos
+      if (!orgLine) {
+        orgLine = lines.find((l) => {
+          if (l.length < 10) return false;
+          return /MUNICIPALIDAD|MINISTERIO|SERVICIO|GOBIERNO|HOSPITAL|UNIVERSIDAD|SUBSECRETARIA|ENERGIA/i.test(l) &&
+                 !/Publicada|Finaliza|Presupuesto|Revisar detalle|Segundo llamado|Tercer llamado/i.test(l);
+        }) || '';
+      }
 
       const link_detalle = extractLink(trigger);
 
@@ -326,6 +391,81 @@ async function upsertLicitaciones(supabase, rows) {
       .from(table)
       .upsert(batch, { onConflict: 'codigo' });
     if (error) throw error;
+  }
+}
+
+// Constantes para clasificación
+// UTM Enero 2026: $69.751 CLP (Banco Central de Chile)
+// Actualizar mensualmente según: https://si3.bcentral.cl/bdemovil/BDE/Series/MOV_SC_PR12
+const UTM_2026 = 69751;
+const UMBRAL_LICITACION_UTM = 100;
+const UMBRAL_LICITACION_CLP = UMBRAL_LICITACION_UTM * UTM_2026; // $6.975.100 CLP
+
+function esCompraAgil(monto) {
+  // REGLA: Compra Ágil si monto <= 100 UTM, Licitación si > 100 UTM
+  if (!monto || monto === 0) return true; // Sin monto = compra ágil por defecto
+  return monto <= UMBRAL_LICITACION_CLP;
+}
+
+async function upsertComprasAgiles(supabase, licitacionesRows) {
+  // Mapear datos de licitaciones a compras_agiles
+  // IMPORTANTE: Solo guardar en compras_agiles si el monto <= 100 UTM
+  const comprasAgilesRows = licitacionesRows
+    .filter((lic) => {
+      // Solo procesar si es realmente una compra ágil (<= 100 UTM)
+      return esCompraAgil(lic.presupuesto_estimado);
+    })
+    .map((lic) => {
+      const montoUTM = lic.presupuesto_estimado ? (lic.presupuesto_estimado / UTM_2026).toFixed(2) : null;
+      const clasificacion = lic.presupuesto_estimado 
+        ? (lic.presupuesto_estimado <= UMBRAL_LICITACION_CLP ? 'L1' : 
+           lic.presupuesto_estimado <= (1000 * UTM_2026) ? 'LE' :
+           lic.presupuesto_estimado <= (5000 * UTM_2026) ? 'LP' : 'LR')
+        : 'L1';
+      
+      const row = {
+        codigo: lic.codigo,
+        nombre: lic.titulo || `Compra Ágil ${lic.codigo}`,
+        nombre_organismo: lic.organismo || 'Organismo no especificado',
+        monto_estimado: lic.presupuesto_estimado || null,
+        fecha_cierre: lic.finaliza_el || null,
+        estado: lic.estado_detallado || lic.estado || 'activa',
+        region: lic.departamento || null,
+        descripcion: lic.titulo || null,
+        // IMPORTANTE: Establecer match_encontrado en false para que aparezcan como "nuevas"
+        match_encontrado: false,
+        match_score: null,
+        datos_json: {
+          estado_original: lic.estado,
+          estado_detallado: lic.estado_detallado,
+          publicada_el: lic.publicada_el,
+          finaliza_el: lic.finaliza_el,
+          departamento: lic.departamento,
+          fecha_extraccion: lic.fecha_extraccion,
+          link_detalle: lic.link_detalle || null,
+          monto_utm: montoUTM,
+          categoria: clasificacion,
+          tipo_proceso: 'compra_agil' // Clasificado como compra ágil (<= 100 UTM)
+        }
+      };
+      
+      // Solo agregar link_oficial si existe (evitar error de schema cache)
+      if (lic.link_detalle) {
+        row.link_oficial = lic.link_detalle;
+      }
+      
+      return row;
+    });
+
+  const batches = chunkArray(comprasAgilesRows, 200);
+  for (const batch of batches) {
+    const { error } = await supabase
+      .from('compras_agiles')
+      .upsert(batch, { onConflict: 'codigo' });
+    if (error) {
+      console.warn(`Error al sincronizar a compras_agiles: ${error.message}`);
+      // No lanzamos error para no interrumpir el proceso principal
+    }
   }
 }
 
@@ -537,10 +677,62 @@ async function main() {
 
   const isHeadless = args.headed ? false : config.headless;
 
-  const browser = await puppeteer.launch({
+  // Configurar directorio de datos de usuario en el workspace para evitar problemas de permisos en macOS
+  const userDataDir = path.join(process.cwd(), '.puppeteer-user-data');
+  
+  // Intentar usar Chrome del sistema en macOS si está disponible
+  let executablePath = null;
+  const chromePaths = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium'
+  ];
+  
+  for (const chromePath of chromePaths) {
+    if (fs.existsSync(chromePath)) {
+      executablePath = chromePath;
+      console.log(`Usando Chrome del sistema: ${executablePath}`);
+      break;
+    }
+  }
+  
+  const launchOptions = {
     headless: isHeadless ? 'new' : false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+    userDataDir: userDataDir,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-extensions',
+      '--disable-crashpad',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-breakpad',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-features=TranslateUI',
+      '--disable-ipc-flooding-protection',
+      '--disable-renderer-backgrounding',
+      '--disable-sync',
+      '--metrics-recording-only',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--no-pings',
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--crash-dumps-dir=' + path.join(process.cwd(), '.puppeteer-crash-dumps')
+    ],
+    ignoreDefaultArgs: ['--disable-extensions'],
+    timeout: 60000
+  };
+  
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
+  
+  const browser = await puppeteer.launch(launchOptions);
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
@@ -658,15 +850,44 @@ async function main() {
       const nowIso = toIsoNow();
       const licRows = comprasNuevas.map((c) => ({
         ...c,
+        nombre: c.titulo || `Compra Ágil ${c.codigo}`, // Asegurar que nombre no sea null
         fecha_extraccion: nowIso
       }));
 
       if (dryRun) {
         console.log(`[dry-run] Enviaría ${licRows.length} filas a 'licitaciones' (upsert por codigo).`);
+        if (licRows.length > 0) {
+          console.log(`[dry-run] Ejemplo de compra extraída:`, JSON.stringify(licRows[0], null, 2));
+        }
       } else {
         if (licRows.length) {
-          await upsertLicitaciones(supabase, licRows);
-          console.log(`Upsert OK: ${licRows.length} filas en 'licitaciones'.`);
+          try {
+            await upsertLicitaciones(supabase, licRows);
+            console.log(`Upsert OK: ${licRows.length} filas en 'licitaciones'.`);
+            
+            // Sincronizar SOLO compras ágiles (<= 100 UTM) a compras_agiles para el frontend
+            // REGLA: Licitaciones (> 100 UTM) NO van a compras_agiles
+            try {
+              const comprasAgiles = licRows.filter(lic => esCompraAgil(lic.presupuesto_estimado));
+              if (comprasAgiles.length > 0) {
+                await upsertComprasAgiles(supabase, comprasAgiles);
+                console.log(`Sincronización OK: ${comprasAgiles.length} compras ágiles (<= 100 UTM) en 'compras_agiles'.`);
+                const licitaciones = licRows.length - comprasAgiles.length;
+                if (licitaciones > 0) {
+                  console.log(`ℹ️  ${licitaciones} licitaciones (> 100 UTM) NO se guardaron en compras_agiles (correcto según regla de negocio).`);
+                }
+              } else {
+                console.log(`ℹ️  Todas las ${licRows.length} son licitaciones (> 100 UTM), no se guardan en compras_agiles.`);
+              }
+            } catch (syncErr) {
+              console.warn(`Advertencia: No se pudo sincronizar a compras_agiles (continuando): ${String(syncErr?.message || syncErr)}`);
+            }
+          } catch (supabaseErr) {
+            console.warn(`Error al guardar en Supabase (continuando): ${String(supabaseErr?.message || supabaseErr)}`);
+            if (args.test) {
+              console.log(`[test] Ejemplo de compra extraída:`, JSON.stringify(licRows[0], null, 2));
+            }
+          }
         }
       }
 
@@ -716,7 +937,11 @@ async function main() {
             if (dryRun) {
               console.log(`[dry-run] ${compra.codigo}: productos=${sorted.length} -> enviaría ${itemRows.length} a 'licitacion_items'.`);
             } else {
-              await upsertLicitacionItems(supabase, itemRows);
+              try {
+                await upsertLicitacionItems(supabase, itemRows);
+              } catch (supabaseErr) {
+                console.warn(`Error al guardar items en Supabase (${compra.codigo}): ${String(supabaseErr?.message || supabaseErr)}`);
+              }
             }
 
             // Documentos (opcional): intentamos guardar en tabla extra si existe
@@ -745,8 +970,14 @@ async function main() {
       await Promise.all(detailTasks);
 
       // Mantener en memoria un resumen (útil para logs/fin de corrida)
+      // Agregar TODAS las compras extraídas, no solo las nuevas
       const existing = new Set(allCompras.map((c) => c.codigo));
-      for (const c of compras) if (!existing.has(c.codigo)) allCompras.push(c);
+      for (const c of compras) {
+        if (!existing.has(c.codigo)) {
+          allCompras.push(c);
+          existing.add(c.codigo);
+        }
+      }
 
       if (maxPages && currentPage >= maxPages) break;
       if (!maxPages && args.test) break;
