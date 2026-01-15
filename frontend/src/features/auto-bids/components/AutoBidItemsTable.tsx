@@ -5,11 +5,13 @@ export function AutoBidItemsTable({
   editable,
   onEditItem,
   onAddItem,
+  adding,
 }: {
   items: AutoBidItem[]
   editable: boolean
   onEditItem: (item: AutoBidItem) => void
   onAddItem: () => void
+  adding?: boolean
 }) {
   return (
     <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
@@ -18,10 +20,11 @@ export function AutoBidItemsTable({
         {editable ? (
           <button
             type="button"
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             onClick={onAddItem}
+            disabled={Boolean(adding)}
           >
-            + Agregar línea
+            {adding ? 'Agregando…' : '+ Agregar línea'}
           </button>
         ) : null}
       </div>

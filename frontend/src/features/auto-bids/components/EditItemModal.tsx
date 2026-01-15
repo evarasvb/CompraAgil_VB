@@ -6,11 +6,17 @@ export function EditItemModal({
   item,
   onClose,
   onSave,
+  onDelete,
+  saving,
+  deleting,
 }: {
   open: boolean
   item: AutoBidItem | null
   onClose: () => void
   onSave: (next: AutoBidItem) => void
+  onDelete?: (item: AutoBidItem) => void
+  saving?: boolean
+  deleting?: boolean
 }) {
   const [nombre, setNombre] = useState(() => item?.nombre_oferta ?? '')
   const [precio, setPrecio] = useState(() => (item?.precio_unitario != null ? String(item.precio_unitario) : ''))
@@ -92,12 +98,21 @@ export function EditItemModal({
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+          {onDelete ? (
+            <button
+              className="mr-auto rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+              disabled={Boolean(deleting) || Boolean(saving)}
+              onClick={() => onDelete(item)}
+            >
+              {deleting ? 'Eliminando…' : 'Eliminar'}
+            </button>
+          ) : null}
           <button className="rounded-md border px-3 py-2 text-xs font-semibold" onClick={onClose}>
             Cancelar
           </button>
           <button
             className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-            disabled={false}
+            disabled={Boolean(saving) || Boolean(deleting)}
             onClick={() => {
               const n = precio.trim() ? Number(precio) : null
               onSave({
@@ -107,10 +122,9 @@ export function EditItemModal({
                 proveedor: proveedor || null,
                 precio_unitario: n != null && Number.isFinite(n) ? n : null,
               })
-              onClose()
             }}
           >
-            Guardar
+            {saving ? 'Guardando…' : 'Guardar'}
           </button>
         </div>
       </div>

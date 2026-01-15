@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { requireSupabase } from '../../../lib/supabase'
+import toast from 'react-hot-toast'
+import {
+  createAutoBidItem,
+  deleteAutoBidItem,
+  recalculateAutoBidTotals,
+  requireSupabase,
+  updateAutoBidItem,
+} from '../../../lib/supabase'
 import { formatCLP } from '../../../lib/money'
 import type { AutoBid, AutoBidItem, ConductaPago } from '../types'
 import { AutoBidItemsTable } from '../components/AutoBidItemsTable'
@@ -16,6 +23,9 @@ export function AutoBidDetailPage() {
 
   const [editable, setEditable] = useState(false)
   const [editingItem, setEditingItem] = useState<AutoBidItem | null>(null)
+  const [savingItemId, setSavingItemId] = useState<string | null>(null)
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
+  const [addingItem, setAddingItem] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -102,11 +112,23 @@ export function AutoBidDetailPage() {
 
   const header = useMemo(() => {
     if (!bid) return null
-    const estadoLabel = bid.estado === 'pendiente' || bid.estado === 'borrador' ? 'Pendiente' : 'Abierta'
+    const estadoLabel =
+      bid.estado === 'pendiente' || bid.estado === 'borrador'
+        ? 'Pendiente'
+        : bid.estado === 'enviada'
+          ? 'Enviada'
+          : bid.estado === 'anulada'
+            ? 'Anulada'
+            : 'Abierta'
     return { estadoLabel }
   }, [bid])
 
   if (!bid) return <div className="text-sm text-slate-600">{error ? 'No se pudo cargar la oferta.' : 'Cargando…'}</div>
+
+  async function refreshTotals(autoBidId: string) {
+    const updated = await recalculateAutoBidTotals(autoBidId)
+    setBid(updated)
+  }
 
   return (
     <div className="space-y-4">
@@ -207,27 +229,32 @@ export function AutoBidDetailPage() {
           <AutoBidItemsTable
             items={items}
             editable={editable}
+            adding={addingItem}
             onAddItem={() => {
-              const next: AutoBidItem = {
-                id: `tmp-${Date.now()}`,
-                auto_bid_id: bid.id,
-                item_index: items.length ? Math.max(...items.map((x) => x.item_index)) + 1 : 1,
-                requerimiento: 'Nuevo requerimiento',
-                inventario_producto_id: null,
-                match_confidence: null,
-                match_method: null,
-                nombre_oferta: null,
-                sku: null,
-                proveedor: null,
-                cantidad: 1,
-                unidad: 'Unid.',
-                precio_unitario: 0,
-                imagen_url: null,
-                ficha_tecnica_url: null,
-                notas: null,
-              }
-              setItems((prev) => [...prev, next])
-              setEditingItem(next)
+              if (addingItem) return
+              setAddingItem(true)
+              ;(async () => {
+                try {
+                  const created = await createAutoBidItem(bid.id, {
+                    requerimiento: 'Nuevo requerimiento',
+                    cantidad: 1,
+                    unidad: 'Unid.',
+                    precio_unitario: 0,
+                    nombre_oferta: null,
+                    sku: null,
+                    proveedor: null,
+                    notas: null,
+                  })
+                  setItems((prev) => [...prev, created])
+                  setEditingItem(created)
+                  await refreshTotals(bid.id)
+                  toast.success('Item agregado')
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'No se pudo agregar el item')
+                } finally {
+                  setAddingItem(false)
+                }
+              })()
             }}
             onEditItem={(it) => setEditingItem(it)}
           />
@@ -241,8 +268,49 @@ export function AutoBidDetailPage() {
         open={Boolean(editingItem)}
         item={editingItem}
         onClose={() => setEditingItem(null)}
+        saving={Boolean(editingItem?.id && savingItemId === editingItem.id)}
+        deleting={Boolean(editingItem?.id && deletingItemId === editingItem.id)}
         onSave={(next) => {
-          setItems((prev) => prev.map((x) => (x.id === next.id ? next : x)))
+          if (!editingItem) return
+          setSavingItemId(editingItem.id)
+          ;(async () => {
+            try {
+              const updated = await updateAutoBidItem(editingItem.id, {
+                nombre_oferta: next.nombre_oferta,
+                sku: next.sku,
+                proveedor: next.proveedor,
+                precio_unitario: next.precio_unitario,
+              })
+              setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+              setEditingItem(updated)
+              await refreshTotals(bid.id)
+              toast.success('Item actualizado')
+              setEditingItem(null)
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'No se pudo guardar el item')
+            } finally {
+              setSavingItemId(null)
+            }
+          })()
+        }}
+        onDelete={(item) => {
+          if (deletingItemId) return
+          const ok = window.confirm('¿Eliminar este item? Esta acción no se puede deshacer.')
+          if (!ok) return
+          setDeletingItemId(item.id)
+          ;(async () => {
+            try {
+              await deleteAutoBidItem(item.id)
+              setItems((prev) => prev.filter((x) => x.id !== item.id))
+              setEditingItem(null)
+              await refreshTotals(bid.id)
+              toast.success('Item eliminado')
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'No se pudo eliminar el item')
+            } finally {
+              setDeletingItemId(null)
+            }
+          })()
         }}
       />
     </div>
