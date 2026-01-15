@@ -179,6 +179,8 @@ CREATE TABLE IF NOT EXISTS auto_bids (
   -- Snapshot/denormalizado para dashboards (evita joins pesados)
   titulo TEXT,
   organismo TEXT,
+  rut_institucion TEXT,
+  departamento TEXT,
   unidad_compra TEXT,
   descripcion TEXT,
 
@@ -297,6 +299,7 @@ COMMENT ON VIEW auto_bids_dashboard IS 'Auto-bids con métricas para cards (item
 CREATE INDEX IF NOT EXISTS idx_auto_bids_estado ON auto_bids(estado);
 CREATE INDEX IF NOT EXISTS idx_auto_bids_fecha_cierre ON auto_bids(fecha_cierre ASC) WHERE fecha_cierre IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_auto_bids_organismo ON auto_bids(organismo);
+CREATE INDEX IF NOT EXISTS idx_auto_bids_rut_institucion ON auto_bids(rut_institucion);
 CREATE INDEX IF NOT EXISTS idx_auto_bids_tipo_proceso ON auto_bids(tipo_proceso);
 CREATE INDEX IF NOT EXISTS idx_auto_bid_items_auto_bid ON auto_bid_items(auto_bid_id);
 CREATE INDEX IF NOT EXISTS idx_conducta_pago_rut_periodo ON conducta_pago(rut_institucion, periodo DESC);
