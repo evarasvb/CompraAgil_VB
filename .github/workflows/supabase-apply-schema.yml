@@ -2,6 +2,10 @@ name: Apply Supabase schema (manual)
 
 on:
   workflow_dispatch: {}
+  # Disparo automático SOLO para esta rama (workaround cuando no hay permisos de dispatch manual).
+  push:
+    branches:
+      - cursor/workflow-cliente-api-f83f
 
 concurrency:
   group: supabase-apply-schema-${{ github.workflow }}-${{ github.ref }}
