@@ -480,9 +480,16 @@ CREATE TABLE IF NOT EXISTS scraper_health_log (
 );
 
 COMMENT ON TABLE scraper_health_log IS 'Log de salud de scrapers (status, duración, items, errores) para monitoreo y alertas.';
-CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
-
+-- Compatibilidad: si la tabla ya existía con un esquema antiguo
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS tipo_scraper TEXT;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS duracion_ms INTEGER;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS items_obtenidos INTEGER;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS errores TEXT;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS meta JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
 
 -- =====================================================
 -- INSTITUCIONES (compradores) - ENRIQUECIMIENTO
