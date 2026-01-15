@@ -1,0 +1,142 @@
+name: Evaristo Autónomo - Mantenimiento Continuo
+
+on:
+  schedule:
+    # Ejecutar cada día a las 2:00 AM UTC (22:00 hora Chile en verano, 23:00 en invierno)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      mision_file:
+        description: "Archivo de misión a ejecutar (ej: mantenimiento_automatico.json)"
+        required: false
+        default: "mantenimiento_automatico.json"
+
+permissions:
+  contents: read
+  # Necesitamos write para hacer commits de cambios
+  contents: write
+
+jobs:
+  evaristo-autonomo:
+    name: Evaristo - Mantenimiento Automático
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # API Keys desde secrets
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Permitir que Evaristo haga commits
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias del sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Instalar dependencias Python
+        working-directory: mercadopublico-scraper/agile-bidder
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests schedule pandas openpyxl
+          if [ -f evaristo/requirements.txt ]; then
+            pip install -r evaristo/requirements.txt
+          fi
+
+      - name: Configurar Git para commits automáticos
+        run: |
+          git config --global user.name "Evaristo Bot"
+          git config --global user.email "evaristo@firmavb.cl"
+
+      - name: Ejecutar Evaristo - Mantenimiento Automático
+        working-directory: mercadopublico-scraper/agile-bidder
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "🤖 Iniciando Evaristo Autónomo..."
+          echo "📋 Misión: ${{ github.event.inputs.mision_file || 'mantenimiento_automatico.json' }}"
+          echo "🔑 DeepSeek API Key: ${DEEPSEEK_API_KEY:0:10}..." 
+          echo ""
+          
+          # Verificar que el archivo de misión existe
+          MISION_FILE="${{ github.event.inputs.mision_file || 'mantenimiento_automatico.json' }}"
+          if [ ! -f "evaristo/misiones/$MISION_FILE" ]; then
+            echo "⚠️  Archivo de misión no encontrado: $MISION_FILE"
+            echo "📋 Usando misión por defecto: mantenimiento_automatico.json"
+            MISION_FILE="mantenimiento_automatico.json"
+          fi
+          
+          # Ejecutar Evaristo
+          python3 evaristo/evaristo_manager.py mision "$MISION_FILE" || {
+            echo "❌ Error ejecutando Evaristo"
+            exit 1
+          }
+          
+          echo ""
+          echo "✅ Evaristo completó el mantenimiento"
+
+      - name: Verificar cambios realizados
+        id: verify-changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changes=true" >> $GITHUB_OUTPUT
+            echo "📝 Evaristo realizó cambios en el código"
+            git status --short
+          else
+            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No se realizaron cambios"
+          fi
+
+      - name: Commit cambios de Evaristo
+        if: steps.verify-changes.outputs.changes == 'true'
+        run: |
+          git add -A
+          git commit -m "🤖 Evaristo: Mantenimiento automático $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push origin HEAD:${{ github.ref }} || echo "⚠️  No se pudo hacer push (puede requerir permisos adicionales o cambios en rama protegida)"
+
+      - name: Subir reportes como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaristo-reportes
+          path: |
+            mercadopublico-scraper/agile-bidder/evaristo/reportes/*.json
+            mercadopublico-scraper/agile-bidder/evaristo/evaristo.log
+          retention-days: 30
+
+      - name: Resumen de ejecución
+        if: always()
+        run: |
+          echo "## 📊 Resumen de Evaristo" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Fecha**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**Misión**: ${{ github.event.inputs.mision_file || 'mantenimiento_automatico.json' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f mercadopublico-scraper/agile-bidder/evaristo/reportes/resumen_latest.json ]; then
+            echo "### 📈 Resultados" >> $GITHUB_STEP_SUMMARY
+            cat mercadopublico-scraper/agile-bidder/evaristo/reportes/resumen_latest.json | jq -r '
+              "**Total misiones**: \(.total_misiones)\n" +
+              "**✅ Exitosas**: \(.exitosas)\n" +
+              "**❌ Fallidas**: \(.fallidas)"
+            ' >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ steps.verify-changes.outputs.changes }}" == "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ✨ Cambios Realizados" >> $GITHUB_STEP_SUMMARY
+            echo "Evaristo realizó cambios en el código. Revisa el commit automático." >> $GITHUB_STEP_SUMMARY
+          fi
