@@ -15,9 +15,9 @@ on:
         required: false
         default: ""
       pages:
-        description: "Páginas a procesar (entero). Default: 1"
+        description: "Páginas a procesar (entero). Default: 100"
         required: false
-        default: "1"
+        default: "100"
       max_ficha:
         description: "Máximo de fichas a descargar (entero). Default: vacío (sin límite)"
         required: false
@@ -93,7 +93,7 @@ jobs:
           set -euo pipefail
           FROM_IN="${{ github.event_name == 'workflow_dispatch' && inputs.from || '' }}"
           TO_IN="${{ github.event_name == 'workflow_dispatch' && inputs.to || '' }}"
-          PAGES_IN="${{ github.event_name == 'workflow_dispatch' && inputs.pages || '1' }}"
+          PAGES_IN="${{ github.event_name == 'workflow_dispatch' && inputs.pages || '100' }}"
           MAX_FICHA_IN="${{ github.event_name == 'workflow_dispatch' && inputs.max_ficha || '' }}"
 
           YESTERDAY="$(date -u -d 'yesterday' +%F)"
