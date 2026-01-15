@@ -5,6 +5,9 @@
 --          con productos y hacer matching automático
 -- =====================================================
 
+-- Requerido para gen_random_uuid() (IDs UUID)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- TABLA PRINCIPAL: LICITACIONES
 -- Almacena datos generales de cada compra ágil
 CREATE TABLE IF NOT EXISTS licitaciones (
@@ -159,6 +162,144 @@ CREATE TABLE IF NOT EXISTS ofertas (
 );
 
 COMMENT ON TABLE ofertas IS 'Registro de ofertas enviadas a MercadoPúblico';
+
+-- =====================================================
+-- MÓDULO: OFERTAS AUTOMÁTICAS (FirmaVB)
+-- Tablas para generar/editar/enviar ofertas sugeridas.
+-- =====================================================
+
+-- Cabecera de oferta automática (una por oportunidad/proceso)
+CREATE TABLE IF NOT EXISTS auto_bids (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Referencia flexible al proceso (compra ágil vs licitación grande)
+  tipo_proceso TEXT NOT NULL CHECK (tipo_proceso IN ('compra_agil', 'licitacion')),
+  codigo_proceso TEXT NOT NULL,
+
+  -- Snapshot/denormalizado para dashboards (evita joins pesados)
+  titulo TEXT,
+  organismo TEXT,
+  unidad_compra TEXT,
+  descripcion TEXT,
+
+  -- Convocatoria/llamado (cuando aplique)
+  convocatoria TEXT CHECK (convocatoria IN ('primer_llamado', 'segundo_llamado')),
+
+  -- Fechas operativas para UI
+  fecha_publicacion TIMESTAMP WITH TIME ZONE,
+  fecha_cierre TIMESTAMP WITH TIME ZONE,
+
+  -- Monto/presupuesto
+  presupuesto_total NUMERIC(15,2),
+  moneda TEXT DEFAULT 'CLP',
+
+  -- Estado de trabajo de la oferta
+  estado TEXT NOT NULL DEFAULT 'pendiente'
+    CHECK (estado IN ('abierta', 'pendiente', 'borrador', 'enviada', 'anulada')),
+
+  -- Totales de la oferta (se recalculan desde items)
+  total_neto NUMERIC(15,2) DEFAULT 0,
+  iva NUMERIC(15,2) DEFAULT 0,
+  total NUMERIC(15,2) DEFAULT 0,
+
+  -- Metadata
+  notas TEXT,
+  raw_json JSONB,
+
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+  UNIQUE(tipo_proceso, codigo_proceso)
+);
+
+COMMENT ON TABLE auto_bids IS 'Ofertas automáticas generadas para oportunidades (compra ágil o licitación)';
+COMMENT ON COLUMN auto_bids.tipo_proceso IS 'compra_agil o licitacion (>=100 UTM)';
+COMMENT ON COLUMN auto_bids.convocatoria IS 'primer_llamado o segundo_llamado (si aplica)';
+
+-- Items/líneas de la oferta automática
+CREATE TABLE IF NOT EXISTS auto_bid_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  auto_bid_id UUID NOT NULL REFERENCES auto_bids(id) ON DELETE CASCADE,
+
+  item_index INTEGER NOT NULL,
+
+  -- Requerimiento original del comprador
+  requerimiento TEXT,
+
+  -- Match con inventario (identificador interno o SKU)
+  inventario_producto_id TEXT,
+  match_confidence NUMERIC(5,2),
+  match_method TEXT,
+
+  -- Tu oferta (editable)
+  nombre_oferta TEXT,
+  sku TEXT,
+  proveedor TEXT,
+
+  cantidad NUMERIC(15,4),
+  unidad TEXT,
+  precio_unitario NUMERIC(15,2),
+
+  -- Adjuntos a nivel item (referencias a storage)
+  imagen_url TEXT,
+  ficha_tecnica_url TEXT,
+
+  notas TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+  UNIQUE(auto_bid_id, item_index)
+);
+
+COMMENT ON TABLE auto_bid_items IS 'Items de cada oferta automática (match + edición manual + adjuntos)';
+
+-- Conducta de pago por institución (histórico)
+CREATE TABLE IF NOT EXISTS conducta_pago (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rut_institucion TEXT,
+  institucion TEXT,
+  unidad_compra TEXT,
+
+  -- Historial: usamos periodo mensual (primer día del mes)
+  periodo DATE NOT NULL,
+
+  dias_promedio_pago NUMERIC(10,2),
+  porcentaje_morosidad NUMERIC(5,2),
+  muestras INTEGER,
+
+  fuente TEXT,
+  raw_json JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+  UNIQUE (rut_institucion, periodo)
+);
+
+COMMENT ON TABLE conducta_pago IS 'Histórico de conducta de pago por institución (días promedio y % morosidad)';
+COMMENT ON COLUMN conducta_pago.periodo IS 'Periodo (mes) representado como fecha (YYYY-MM-01)';
+
+-- Vista para el dashboard (progreso de match + totales)
+CREATE OR REPLACE VIEW auto_bids_dashboard AS
+SELECT
+  b.*,
+  COUNT(i.id) AS total_items,
+  COUNT(i.id) FILTER (WHERE i.inventario_producto_id IS NOT NULL OR COALESCE(i.match_confidence, 0) >= 70) AS items_emparejados,
+  CASE
+    WHEN COUNT(i.id) = 0 THEN 0
+    ELSE ROUND((COUNT(i.id) FILTER (WHERE i.inventario_producto_id IS NOT NULL OR COALESCE(i.match_confidence, 0) >= 70))::numeric * 100 / COUNT(i.id), 2)
+  END AS match_percent
+FROM auto_bids b
+LEFT JOIN auto_bid_items i ON i.auto_bid_id = b.id
+GROUP BY b.id;
+
+COMMENT ON VIEW auto_bids_dashboard IS 'Auto-bids con métricas para cards (items total, emparejados, % match)';
+
+-- Índices recomendados
+CREATE INDEX IF NOT EXISTS idx_auto_bids_estado ON auto_bids(estado);
+CREATE INDEX IF NOT EXISTS idx_auto_bids_fecha_cierre ON auto_bids(fecha_cierre ASC) WHERE fecha_cierre IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_auto_bids_organismo ON auto_bids(organismo);
+CREATE INDEX IF NOT EXISTS idx_auto_bids_tipo_proceso ON auto_bids(tipo_proceso);
+CREATE INDEX IF NOT EXISTS idx_auto_bid_items_auto_bid ON auto_bid_items(auto_bid_id);
+CREATE INDEX IF NOT EXISTS idx_conducta_pago_rut_periodo ON conducta_pago(rut_institucion, periodo DESC);
 
 -- =====================================================
 -- ÍNDICES PARA OPTIMIZACIÓN DE QUERIES
@@ -334,9 +475,6 @@ ON CONFLICT (licitacion_codigo, item_index) DO NOTHING;
 -- =====================================================
 -- LICITACIONES GRANDES (>=100 UTM) - API (estructura base)
 -- =====================================================
-
--- Requerido para gen_random_uuid() (ordenes_compra_items)
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS licitaciones_api (
   codigo TEXT PRIMARY KEY,
