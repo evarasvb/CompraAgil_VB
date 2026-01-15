@@ -184,6 +184,8 @@ function mapToLicitacionRow({ resultado, ficha, nowIso }) {
 
   return {
     codigo,
+    // Compatibilidad con esquemas antiguos que usan 'nombre' (NOT NULL) en vez de 'titulo'
+    nombre: titulo || codigo,
     titulo,
     estado: toStringOrNull(resultado?.estado || ficha?.estado),
     estado_detallado: null,
