@@ -32,9 +32,8 @@ jobs:
       - name: Instalar dependencias
         working-directory: mercadopublico-scraper
         run: |
-          npm ci
+          npm install
           npm install unzipper --save
-
       - name: Crear .env con secrets
         working-directory: mercadopublico-scraper
         run: |
