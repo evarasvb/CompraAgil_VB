@@ -2,6 +2,10 @@ name: Apply Supabase schema (manual)
 
 on:
   workflow_dispatch: {}
+  # Trigger temporal (solo esta rama) para aplicar schema sin intervención manual.
+  push:
+    branches:
+      - cursor/workflow-cliente-api-f83f
 
 concurrency:
   group: supabase-apply-schema-${{ github.workflow }}-${{ github.ref }}
