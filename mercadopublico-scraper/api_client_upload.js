@@ -87,6 +87,50 @@ function parseApiDateTime(dateStr) {
   return `${yyyy}-${mm}-${dd}T${HH}:${MM}:00`;
 }
 
+function tzOffsetMinutesAt(date, timeZone) {
+  // Requiere Node 20+ (Intl con shortOffset)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset'
+  }).formatToParts(date);
+  const tz = parts.find((p) => p.type === 'timeZoneName')?.value || '';
+  // Ejemplos esperados: "GMT-3", "GMT-03:00", "UTC-3", "UTC-03:00"
+  const m = String(tz).match(/(?:GMT|UTC)([+-])(\d{1,2})(?::?(\d{2}))?/);
+  if (!m) return null;
+  const sign = m[1] === '-' ? -1 : 1;
+  const hh = Number.parseInt(m[2], 10);
+  const mm = Number.parseInt(m[3] || '0', 10);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return sign * (hh * 60 + mm);
+}
+
+function parseApiDateTimeToTimestamptz(dateStr, { timeZone = 'America/Santiago' } = {}) {
+  if (!dateStr) return null;
+  const cleaned = String(dateStr).trim();
+  const m = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const yyyy = Number.parseInt(m[1], 10);
+  const mo = Number.parseInt(m[2], 10);
+  const dd = Number.parseInt(m[3], 10);
+  const HH = Number.parseInt(m[4], 10);
+  const MM = Number.parseInt(m[5], 10);
+  if (![yyyy, mo, dd, HH, MM].every((n) => Number.isFinite(n))) return null;
+
+  // Interpretar el string como hora local Chile y convertir a UTC ISO.
+  const utcNaive = Date.UTC(yyyy, mo - 1, dd, HH, MM, 0);
+  let offset = tzOffsetMinutesAt(new Date(utcNaive), timeZone);
+  if (offset == null) return null;
+  let utc = utcNaive - offset * 60_000;
+
+  // Refinar una vez (por DST)
+  const offset2 = tzOffsetMinutesAt(new Date(utc), timeZone);
+  if (offset2 != null && offset2 !== offset) {
+    utc = utcNaive - offset2 * 60_000;
+  }
+
+  return new Date(utc).toISOString();
+}
+
 function toStringOrNull(v) {
   if (v == null) return null;
   const s = String(v).trim();
@@ -131,18 +175,29 @@ function mapToLicitacionRow({ resultado, ficha, nowIso }) {
     (Number.isFinite(resultado?.monto_disponible) ? resultado.monto_disponible : null) ??
     null;
 
+  const publicadaRaw = resultado?.fecha_publicacion || ficha?.fecha_publicacion;
+  const cierreRaw = resultado?.fecha_cierre || ficha?.fecha_cierre;
+
+  const fechaPublicacionTs = parseApiDateTimeToTimestamptz(publicadaRaw);
+  const fechaCierre1Ts = parseApiDateTimeToTimestamptz(ficha?.fecha_cierre_primer_llamado);
+  const fechaCierre2Ts = parseApiDateTimeToTimestamptz(ficha?.fecha_cierre_segundo_llamado);
+
   return {
     codigo,
     titulo,
     estado: toStringOrNull(resultado?.estado || ficha?.estado),
     estado_detallado: null,
-    publicada_el: parseApiDateTime(resultado?.fecha_publicacion || ficha?.fecha_publicacion),
-    finaliza_el: parseApiDateTime(resultado?.fecha_cierre || ficha?.fecha_cierre),
+    publicada_el: parseApiDateTime(publicadaRaw),
+    finaliza_el: parseApiDateTime(cierreRaw),
     organismo: toStringOrNull(resultado?.organismo || institucion?.organismo_comprador),
     rut_institucion: toStringOrNull(institucion?.rut_organismo_comprador),
     departamento: toStringOrNull(resultado?.unidad || institucion?.division),
     presupuesto_estimado: presupuesto,
     tipo_presupuesto: toStringOrNull(ficha?.tipo_presupuesto),
+    // Campos timestamp (si tu schema los usa para filtros/BI). Si no se pueden parsear, quedan null.
+    fecha_publicacion: fechaPublicacionTs,
+    fecha_cierre_primer_llamado: fechaCierre1Ts,
+    fecha_cierre_segundo_llamado: fechaCierre2Ts,
     direccion_entrega: toStringOrNull(ficha?.direccion_entrega),
     plazo_entrega: toStringOrNull(ficha?.plazo_entrega),
     link_detalle: buildLinkDetalle(codigo),
