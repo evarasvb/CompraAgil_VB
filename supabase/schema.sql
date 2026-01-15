@@ -544,8 +544,8 @@ SELECT
   l.organismo,
   NULL::text AS descripcion,
   l.estado,
-  (l.publicada_el)::timestamp AS fecha_publicacion,
-  (l.finaliza_el)::timestamp AS fecha_cierre,
+  (l.publicada_el)::timestamptz AS fecha_publicacion,
+  (l.finaliza_el)::timestamptz AS fecha_cierre,
   l.link_detalle,
   l.presupuesto_estimado,
   l.categoria_match,
@@ -560,8 +560,8 @@ SELECT
   a.organismo,
   a.descripcion,
   a.estado,
-  a.fecha_publicacion,
-  a.fecha_cierre,
+  a.fecha_publicacion::timestamptz AS fecha_publicacion,
+  a.fecha_cierre::timestamptz AS fecha_cierre,
   a.link_detalle,
   a.presupuesto_estimado,
   NULL::text AS categoria_match,
@@ -656,7 +656,7 @@ SELECT
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'apertura'::text AS tipo_evento,
-  (l.publicada_el)::timestamp AS fecha,
+  (l.publicada_el)::timestamptz AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.publicada_el IS NOT NULL AND l.publicada_el <> ''
@@ -666,7 +666,7 @@ SELECT
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'cierre'::text AS tipo_evento,
-  (l.finaliza_el)::timestamp AS fecha,
+  (l.finaliza_el)::timestamptz AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
@@ -676,7 +676,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'apertura'::text AS tipo_evento,
-  a.fecha_publicacion AS fecha,
+  a.fecha_publicacion::timestamptz AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_publicacion IS NOT NULL
@@ -686,7 +686,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'cierre'::text AS tipo_evento,
-  a.fecha_cierre AS fecha,
+  a.fecha_cierre::timestamptz AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_cierre IS NOT NULL
