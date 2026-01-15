@@ -283,6 +283,7 @@ export function AutoBidDetailPage() {
       </div>
 
       <EditItemModal
+        key={editingItem?.id ?? 'closed'}
         open={Boolean(editingItem)}
         item={editingItem}
         onClose={() => setEditingItem(null)}

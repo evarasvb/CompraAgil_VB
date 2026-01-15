@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import type { AutoBidItem } from '../types'
 
 export function EditItemModal({
@@ -12,22 +12,12 @@ export function EditItemModal({
   onClose: () => void
   onSave: (next: AutoBidItem) => void
 }) {
-  const [nombre, setNombre] = useState('')
-  const [precio, setPrecio] = useState('')
-  const [sku, setSku] = useState('')
-  const [proveedor, setProveedor] = useState('')
-
-  useEffect(() => {
-    if (!item) return
-    setNombre(item.nombre_oferta ?? '')
-    setPrecio(item.precio_unitario != null ? String(item.precio_unitario) : '')
-    setSku(item.sku ?? '')
-    setProveedor(item.proveedor ?? '')
-  }, [item])
-
-  const canSave = useMemo(() => Boolean(item), [item])
-
   if (!open || !item) return null
+
+  const [nombre, setNombre] = useState(item.nombre_oferta ?? '')
+  const [precio, setPrecio] = useState(item.precio_unitario != null ? String(item.precio_unitario) : '')
+  const [sku, setSku] = useState(item.sku ?? '')
+  const [proveedor, setProveedor] = useState(item.proveedor ?? '')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -107,7 +97,7 @@ export function EditItemModal({
           </button>
           <button
             className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-            disabled={!canSave}
+            disabled={false}
             onClick={() => {
               const n = precio.trim() ? Number(precio) : null
               onSave({
