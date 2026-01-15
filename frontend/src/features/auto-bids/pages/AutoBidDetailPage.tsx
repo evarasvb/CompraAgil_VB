@@ -270,6 +270,10 @@ export function AutoBidDetailPage() {
         onClose={() => setEditingItem(null)}
         saving={Boolean(editingItem?.id && savingItemId === editingItem.id)}
         deleting={Boolean(editingItem?.id && deletingItemId === editingItem.id)}
+        onPatch={(next) => {
+          setItems((prev) => prev.map((x) => (x.id === next.id ? next : x)))
+          setEditingItem(next)
+        }}
         onSave={(next) => {
           if (!editingItem) return
           setSavingItemId(editingItem.id)

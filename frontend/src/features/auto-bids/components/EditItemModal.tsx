@@ -1,11 +1,14 @@
 import { useState } from 'react'
+import toast from 'react-hot-toast'
 import type { AutoBidItem } from '../types'
+import { uploadProductImage, uploadTechnicalSheet, updateAutoBidItem } from '../../../lib/supabase'
 
 export function EditItemModal({
   open,
   item,
   onClose,
   onSave,
+  onPatch,
   onDelete,
   saving,
   deleting,
@@ -14,6 +17,7 @@ export function EditItemModal({
   item: AutoBidItem | null
   onClose: () => void
   onSave: (next: AutoBidItem) => void
+  onPatch?: (next: AutoBidItem) => void
   onDelete?: (item: AutoBidItem) => void
   saving?: boolean
   deleting?: boolean
@@ -22,6 +26,8 @@ export function EditItemModal({
   const [precio, setPrecio] = useState(() => (item?.precio_unitario != null ? String(item.precio_unitario) : ''))
   const [sku, setSku] = useState(() => item?.sku ?? '')
   const [proveedor, setProveedor] = useState(() => item?.proveedor ?? '')
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [uploadingPdf, setUploadingPdf] = useState(false)
 
   if (!open || !item) return null
 
@@ -83,7 +89,41 @@ export function EditItemModal({
               <div className="rounded-md border border-dashed p-4 text-xs text-slate-600">
                 <div className="font-medium text-slate-900">Arrastra y suelta</div>
                 <div className="mt-1">o selecciona un archivo</div>
-                <input className="mt-2 w-full text-xs" type="file" accept="image/*" />
+                <input
+                  className="mt-2 w-full text-xs"
+                  type="file"
+                  accept="image/*"
+                  disabled={uploadingImage || uploadingPdf || Boolean(saving) || Boolean(deleting)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setUploadingImage(true)
+                    ;(async () => {
+                      try {
+                        const url = await uploadProductImage(file, item.id)
+                        const updated = await updateAutoBidItem(item.id, { imagen_url: url })
+                        onPatch?.(updated)
+                        toast.success('Imagen subida')
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'No se pudo subir la imagen')
+                      } finally {
+                        setUploadingImage(false)
+                        e.target.value = ''
+                      }
+                    })()
+                  }}
+                />
+                {uploadingImage ? <div className="mt-2 text-[11px] text-slate-500">Subiendo…</div> : null}
+                {item.imagen_url ? (
+                  <a
+                    className="mt-2 block text-[11px] font-semibold text-slate-700 underline"
+                    href={item.imagen_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Ver imagen actual
+                  </a>
+                ) : null}
               </div>
             </div>
 
@@ -91,7 +131,41 @@ export function EditItemModal({
               <div className="mb-1 text-xs text-slate-600">Ficha técnica (PDF)</div>
               <div className="rounded-md border border-dashed p-4 text-xs text-slate-600">
                 <div className="font-medium text-slate-900">Subir PDF</div>
-                <input className="mt-2 w-full text-xs" type="file" accept="application/pdf" />
+                <input
+                  className="mt-2 w-full text-xs"
+                  type="file"
+                  accept="application/pdf"
+                  disabled={uploadingImage || uploadingPdf || Boolean(saving) || Boolean(deleting)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setUploadingPdf(true)
+                    ;(async () => {
+                      try {
+                        const url = await uploadTechnicalSheet(file, item.id)
+                        const updated = await updateAutoBidItem(item.id, { ficha_tecnica_url: url })
+                        onPatch?.(updated)
+                        toast.success('PDF subido')
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'No se pudo subir el PDF')
+                      } finally {
+                        setUploadingPdf(false)
+                        e.target.value = ''
+                      }
+                    })()
+                  }}
+                />
+                {uploadingPdf ? <div className="mt-2 text-[11px] text-slate-500">Subiendo…</div> : null}
+                {item.ficha_tecnica_url ? (
+                  <a
+                    className="mt-2 block text-[11px] font-semibold text-slate-700 underline"
+                    href={item.ficha_tecnica_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Ver ficha técnica actual
+                  </a>
+                ) : null}
               </div>
             </div>
           </div>

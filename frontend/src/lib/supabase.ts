@@ -121,3 +121,34 @@ export async function updateAutoBidStatus(autoBidId: string, estado: AutoBidStat
   return updated as AutoBid
 }
 
+function safeFileName(name: string) {
+  return name.replaceAll(/[^a-zA-Z0-9._-]/g, '_')
+}
+
+async function uploadToBucket(bucket: string, file: File, itemId: string): Promise<string> {
+  const supabase = requireSupabase()
+  const ext = file.name.includes('.') ? file.name.split('.').pop() : undefined
+  const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now())
+  const path = `${itemId}/${suffix}${ext ? `.${safeFileName(ext)}` : ''}`
+
+  const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    upsert: true,
+    contentType: file.type || undefined,
+    cacheControl: '3600',
+  })
+
+  if (error) throw new Error(error.message)
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+  if (!data?.publicUrl) throw new Error('No se pudo obtener la URL pública del archivo')
+  return data.publicUrl
+}
+
+export async function uploadProductImage(file: File, itemId: string): Promise<string> {
+  return uploadToBucket('product-images', file, itemId)
+}
+
+export async function uploadTechnicalSheet(file: File, itemId: string): Promise<string> {
+  return uploadToBucket('technical-sheets', file, itemId)
+}
+
