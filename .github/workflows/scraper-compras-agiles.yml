@@ -1,0 +1,99 @@
+name: Scraper Compras Ágiles (API Client)
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Cada hora en punto (UTC)
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mercadopublico-scraper/package-lock.json
+
+      - name: Validar secrets requeridos
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_URL."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" && -z "${SUPABASE_KEY:-}" ]]; then
+            echo "::error::Falta el secret SUPABASE_SERVICE_KEY o SUPABASE_KEY."
+            exit 1
+          fi
+
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SUPABASE_URL=${SUPABASE_URL}" > .env
+          if [[ -n "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}" >> .env
+          fi
+          if [[ -n "${SUPABASE_KEY:-}" ]]; then
+            echo "SUPABASE_KEY=${SUPABASE_KEY}" >> .env
+          fi
+          echo ".env creado con $(wc -l < .env) variables."
+
+      - name: Instalar dependencias (sin Chromium)
+        working-directory: mercadopublico-scraper
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm install
+
+      - name: Ejecutar API client y guardar JSON temporal
+        id: run
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          YESTERDAY="$(date -u -d 'yesterday' +%F)"
+          TMP_JSON="$(mktemp)"
+          echo "from/to=${YESTERDAY}"
+          npm run api-client -- --from "${YESTERDAY}" --to "${YESTERDAY}" --status all --include-ficha > "${TMP_JSON}"
+          echo "tmp_json=${TMP_JSON}" >> "$GITHUB_OUTPUT"
+          echo "Bytes JSON: $(wc -c < "${TMP_JSON}")"
+
+      - name: Subir resultados a Supabase
+        working-directory: mercadopublico-scraper
+        shell: bash
+        run: |
+          set -euo pipefail
+          node api_client_upload.js --input "${{ steps.run.outputs.tmp_json }}"
+
+      - name: Limpiar archivo temporal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="${{ steps.run.outputs.tmp_json }}"
+          if [[ -n "${f:-}" && -f "${f}" ]]; then
+            rm -f "${f}"
+          fi
+
