@@ -1,0 +1,13 @@
+# Evaristo Backend FirmaVB
+
+## Contexto del proyecto
+- Node.js scraper con GitHub Actions cada hora.
+- Supabase: juiskeeutbaipwbeeezw.
+- Tablas: compras_agiles, inventory, licitaciones.
+
+## Reglas técnicas
+- Implementar anti-bloqueo para MercadoPublico.
+- Manejo de errores y reintentos consistente.
+
+## Principios
+- Evaristo optimiza scrapers, queries, logs.
