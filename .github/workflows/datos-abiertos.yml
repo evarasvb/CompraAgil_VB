@@ -1,0 +1,52 @@
+name: Scraper Datos Abiertos (ChileCompra)
+
+on:
+  schedule:
+    # Ejecutar el 2 de cada mes a las 6 AM UTC (3 AM Chile)
+    - cron: '0 6 2 * *'
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Año a procesar (YYYY)'
+        required: false
+        default: ''
+      month:
+        description: 'Mes a procesar (1-12)'
+        required: false
+        default: ''
+
+jobs:
+  scrape-datos-abiertos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        working-directory: mercadopublico-scraper
+        run: |
+          npm ci
+          npm install unzipper --save
+
+      - name: Crear .env con secrets
+        working-directory: mercadopublico-scraper
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> .env
+
+      - name: Ejecutar scraper Datos Abiertos
+        working-directory: mercadopublico-scraper
+        env:
+          DATOS_ABIERTOS_YEAR: ${{ github.event.inputs.year }}
+          DATOS_ABIERTOS_MONTH: ${{ github.event.inputs.month }}
+        run: |
+          echo "Iniciando scraper de Datos Abiertos..."
+          node datos_abiertos_scraper.js
+          echo "Scraper completado"
