@@ -12,12 +12,12 @@ export function EditItemModal({
   onClose: () => void
   onSave: (next: AutoBidItem) => void
 }) {
-  if (!open || !item) return null
+  const [nombre, setNombre] = useState(() => item?.nombre_oferta ?? '')
+  const [precio, setPrecio] = useState(() => (item?.precio_unitario != null ? String(item.precio_unitario) : ''))
+  const [sku, setSku] = useState(() => item?.sku ?? '')
+  const [proveedor, setProveedor] = useState(() => item?.proveedor ?? '')
 
-  const [nombre, setNombre] = useState(item.nombre_oferta ?? '')
-  const [precio, setPrecio] = useState(item.precio_unitario != null ? String(item.precio_unitario) : '')
-  const [sku, setSku] = useState(item.sku ?? '')
-  const [proveedor, setProveedor] = useState(item.proveedor ?? '')
+  if (!open || !item) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
