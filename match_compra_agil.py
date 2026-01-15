@@ -72,6 +72,9 @@ def flatten_results(
         for rank, match in enumerate(item["matches"], start=1):
             net_unit = float(match["net_price"]) if match["net_price"] is not None else 0.0
             total_unit = float(match["total_price"]) if match["total_price"] is not None else 0.0
+            cost_unit = float(match["net_cost"]) if match.get("net_cost") is not None else None
+            margin_unit = float(match["net_margin"]) if match.get("net_margin") is not None else None
+            margin_pct = float(match["margin_pct"]) if match.get("margin_pct") is not None else None
             rows.append({
                 description_col: description,
                 quantity_col: quantity,
@@ -80,8 +83,13 @@ def flatten_results(
                 "score": match["score"],
                 "net_price_unit": net_unit,
                 "total_price_unit": total_unit,
+                "net_cost_unit": cost_unit,
+                "net_margin_unit": margin_unit,
+                "margin_pct": margin_pct,
                 "net_price_extended": net_unit * quantity,
                 "total_price_extended": total_unit * quantity,
+                "net_cost_extended": (cost_unit * quantity) if cost_unit is not None else None,
+                "net_margin_extended": (margin_unit * quantity) if margin_unit is not None else None,
             })
     return pd.DataFrame(rows)
 
@@ -110,6 +118,16 @@ def main() -> None:
         help="Archivo Excel con la lista de precios normalizada. Por defecto price_list_normalized_brand.xlsx.",
     )
     parser.add_argument(
+        "--costs_url",
+        default="https://docs.google.com/spreadsheets/d/1uOX021G12iLk6KtGBnRXA0ThLXE0eZ87/export?format=csv&gid=1149198498",
+        help="URL (CSV export) con costos netos. Por defecto, la planilla compartida.",
+    )
+    parser.add_argument(
+        "--costs_file",
+        default="",
+        help="Ruta alternativa a archivo de costos (CSV/XLSX). Si se provee, tiene prioridad sobre costs_url.",
+    )
+    parser.add_argument(
         "--top_n",
         type=int,
         default=3,
@@ -133,7 +151,9 @@ def main() -> None:
         for _, row in df_in.iterrows()
     }
 
-    matcher = PriceMatcher(args.price_list_file)
+    costs_file = args.costs_file.strip() or None
+    costs_url = None if costs_file else (args.costs_url.strip() or None)
+    matcher = PriceMatcher(args.price_list_file, costs_file=costs_file, costs_url=costs_url)
     results = matcher.match_items(descriptions, top_n=args.top_n)
 
     df_out = flatten_results(

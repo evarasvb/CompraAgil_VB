@@ -41,7 +41,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import pandas as pd
 
@@ -137,6 +137,9 @@ class MatchResult:
     score: float
     net_price: float
     total_price: float
+    net_cost: Optional[float] = None
+    net_margin: Optional[float] = None
+    margin_pct: Optional[float] = None
 
 
 class PriceMatcher:
@@ -147,7 +150,16 @@ class PriceMatcher:
     brand weighting, unit conversions, and other domain-specific heuristics.
     """
 
-    def __init__(self, price_file: str, tax_rate: float = 0.19) -> None:
+    def __init__(
+        self,
+        price_file: str,
+        tax_rate: float = 0.19,
+        *,
+        costs_file: Optional[str] = None,
+        costs_url: Optional[str] = None,
+        costs_product_column: str = "PRODUCTO",
+        costs_cost_column: str = "costo neto",
+    ) -> None:
         """Initialize the matcher.
 
         Args:
@@ -157,6 +169,12 @@ class PriceMatcher:
         """
         self.tax_rate = tax_rate
         self.df = self._load_catalogue(price_file)
+        self._maybe_merge_costs(
+            costs_file=costs_file,
+            costs_url=costs_url,
+            costs_product_column=costs_product_column,
+            costs_cost_column=costs_cost_column,
+        )
         # Precompute normalized product names for matching
         # Using a copy of the original strings to avoid modifying the underlying DataFrame order
         self.df['NORMALIZED'] = self.df['PRODUCTO'].astype(str).apply(_normalize)
@@ -192,6 +210,74 @@ class PriceMatcher:
         # Drop rows where product name is missing
         df = df.dropna(subset=['PRODUCTO']).reset_index(drop=True)
         return df
+
+    @staticmethod
+    def _normalize_colname(s: str) -> str:
+        # normaliza nombres de columnas (sin tildes, lowercase, espacios colapsados)
+        s2 = _remove_accents(str(s)).lower().strip()
+        s2 = re.sub(r"\s+", " ", s2)
+        return s2
+
+    def _maybe_merge_costs(
+        self,
+        *,
+        costs_file: Optional[str],
+        costs_url: Optional[str],
+        costs_product_column: str,
+        costs_cost_column: str,
+    ) -> None:
+        """Carga costos (si existen) y los asocia al catálogo.
+
+        El merge se hace por PRODUCTO normalizado (texto), para tolerar diferencias
+        menores en mayúsculas/tildes.
+        """
+        src = costs_file or costs_url
+        if not src:
+            self.df["NET_COST"] = pd.NA
+            return
+
+        try:
+            if str(src).lower().endswith(".xlsx") or str(src).lower().endswith(".xls"):
+                cdf = pd.read_excel(src)
+            else:
+                cdf = pd.read_csv(src)
+        except Exception:
+            # Si falla el fetch/parseo, dejar costos vacíos (no rompe el matcher)
+            self.df["NET_COST"] = pd.NA
+            return
+
+        # Resolver columnas de forma flexible
+        colmap = {self._normalize_colname(c): c for c in cdf.columns}
+        prod_col = colmap.get(self._normalize_colname(costs_product_column))
+        cost_col = colmap.get(self._normalize_colname(costs_cost_column))
+
+        # Fallbacks comunes
+        if prod_col is None:
+            for k in ["producto", "descripcion", "nombre", "item"]:
+                if k in colmap:
+                    prod_col = colmap[k]
+                    break
+        if cost_col is None:
+            for k in ["costo", "costo neto", "neto", "cost", "cost net"]:
+                if k in colmap:
+                    cost_col = colmap[k]
+                    break
+
+        if prod_col is None or cost_col is None:
+            self.df["NET_COST"] = pd.NA
+            return
+
+        tmp = cdf[[prod_col, cost_col]].copy()
+        tmp = tmp.dropna(subset=[prod_col]).reset_index(drop=True)
+        tmp["PRODUCTO_NORM"] = tmp[prod_col].astype(str).apply(_normalize)
+        tmp["NET_COST"] = pd.to_numeric(tmp[cost_col], errors="coerce")
+        tmp = tmp.dropna(subset=["NET_COST"])
+        tmp = tmp.groupby("PRODUCTO_NORM", as_index=False)["NET_COST"].min()
+
+        # merge por PRODUCTO normalizado del catálogo (todavía no existe NORMALIZED aquí)
+        self.df["PRODUCTO_NORM"] = self.df["PRODUCTO"].astype(str).apply(_normalize)
+        self.df = self.df.merge(tmp, how="left", on="PRODUCTO_NORM")
+        self.df = self.df.drop(columns=["PRODUCTO_NORM"])
 
     @staticmethod
     def _extract_measurements(text: str) -> List[str]:
@@ -315,11 +401,24 @@ class PriceMatcher:
             prod_row = candidates.loc[idx]
             net_price = float(prod_row['precio venta Neto'])
             total_price = net_price * (1 + self.tax_rate)
+            net_cost = None
+            net_margin = None
+            margin_pct = None
+            if "NET_COST" in prod_row and pd.notna(prod_row["NET_COST"]):
+                try:
+                    net_cost = float(prod_row["NET_COST"])
+                    net_margin = net_price - net_cost
+                    margin_pct = (net_margin / net_price) if net_price else None
+                except Exception:
+                    net_cost = None
             matches.append(MatchResult(
                 product=prod_row['PRODUCTO'],
                 score=score,
                 net_price=net_price,
                 total_price=total_price,
+                net_cost=net_cost,
+                net_margin=net_margin,
+                margin_pct=margin_pct,
             ))
         return matches
 
@@ -355,6 +454,9 @@ class PriceMatcher:
                     'score': m.score,
                     'net_price': m.net_price,
                     'total_price': m.total_price,
+                    'net_cost': m.net_cost,
+                    'net_margin': m.net_margin,
+                    'margin_pct': m.margin_pct,
                 }
                 for m in matches
             ],
