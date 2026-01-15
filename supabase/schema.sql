@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_licitaciones_match
 
 CREATE INDEX IF NOT EXISTS idx_licitaciones_fecha_cierre 
   ON licitaciones(fecha_cierre_primer_llamado) 
-  WHERE fecha_cierre_primer_llamado > NOW();
+  WHERE fecha_cierre_primer_llamado IS NOT NULL;
 
 -- Índices en items
 CREATE INDEX IF NOT EXISTS idx_items_licitacion 
@@ -247,17 +247,25 @@ CREATE TRIGGER trigger_check_match
 
 -- Vista: Licitaciones con alto potencial (match > 70%)
 CREATE OR REPLACE VIEW licitaciones_con_match AS
-SELECT 
+SELECT
   l.*,
-  COUNT(i.id) as total_items,
-  COUNT(i.id) FILTER (WHERE i.match_confidence >= 70) as items_con_match,
-  AVG(i.match_confidence) as match_confidence_promedio,
-  SUM(i.precio_total_sugerido) as monto_total_estimado
+  COALESCE(agg.total_items, 0) as total_items,
+  COALESCE(agg.items_con_match, 0) as items_con_match,
+  agg.match_confidence_promedio,
+  agg.monto_total_estimado
 FROM licitaciones l
-LEFT JOIN licitacion_items i ON l.codigo = i.licitacion_codigo
+LEFT JOIN (
+  SELECT
+    licitacion_codigo,
+    COUNT(*) as total_items,
+    COUNT(*) FILTER (WHERE match_confidence >= 70) as items_con_match,
+    AVG(match_confidence) as match_confidence_promedio,
+    SUM(precio_total_sugerido) as monto_total_estimado
+  FROM licitacion_items
+  GROUP BY licitacion_codigo
+) agg ON l.codigo = agg.licitacion_codigo
 WHERE l.match_encontrado = TRUE
-GROUP BY l.codigo
-ORDER BY match_confidence_promedio DESC, l.presupuesto_estimado DESC;
+ORDER BY agg.match_confidence_promedio DESC, l.presupuesto_estimado DESC;
 
 COMMENT ON VIEW licitaciones_con_match IS 'Licitaciones con al menos un producto en inventario';
 
@@ -472,9 +480,177 @@ CREATE TABLE IF NOT EXISTS scraper_health_log (
 );
 
 COMMENT ON TABLE scraper_health_log IS 'Log de salud de scrapers (status, duración, items, errores) para monitoreo y alertas.';
+-- Compatibilidad: si la tabla ya existía con un esquema antiguo
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS tipo_scraper TEXT;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS duracion_ms INTEGER;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS items_obtenidos INTEGER;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS errores TEXT;
+ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS meta JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_scraper_health_log_tipo_created ON scraper_health_log(tipo_scraper, created_at DESC);
 
-ALTER TABLE scraper_health_log ADD COLUMN IF NOT EXISTS duracion_ms INTEGER;
+-- =====================================================
+-- INSTITUCIONES (compradores) - ENRIQUECIMIENTO
+-- =====================================================
+-- Nota: algunos datos (reclamos/conducta de pago) pueden venir de fuentes externas.
+-- Esta tabla permite ir acumulando métricas por institución (RUT).
+CREATE TABLE IF NOT EXISTS instituciones (
+  rut TEXT PRIMARY KEY,
+  nombre TEXT,
+  division TEXT,
+  codigo_entidad TEXT,
+  sector TEXT,
+  sitio_web TEXT,
+  telefono TEXT,
+  correo TEXT,
+  domicilio_legal TEXT,
+  region TEXT,
+  comuna TEXT,
+
+  -- Métricas derivadas (ej. desde ordenes_compra)
+  oc_total INTEGER,
+  oc_monto_total NUMERIC,
+  oc_ultima_fecha TIMESTAMP WITH TIME ZONE,
+
+  -- Campos reservados para futuros scrapers (si se logra extraer desde MercadoPublico)
+  conducta_pago TEXT,
+  pago_promedio_dias INTEGER,
+  pago_sigfe BOOLEAN,
+  pago_actualizado_el TIMESTAMP WITH TIME ZONE,
+  reclamos_total INTEGER,
+  reclamos_ultima_fecha TIMESTAMP WITH TIME ZONE,
+
+  meta JSONB,
+  last_seen_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE instituciones IS 'Instituciones compradoras (RUT) con métricas/enriquecimiento (OC, reclamos, conducta de pago, etc.)';
+CREATE INDEX IF NOT EXISTS idx_instituciones_oc_total ON instituciones(oc_total DESC);
+CREATE INDEX IF NOT EXISTS idx_instituciones_last_seen ON instituciones(last_seen_at DESC);
+
+-- =====================================================
+-- BASE DE GESTIÓN (CRM liviano) - NO la pisa el scraper
+-- =====================================================
+-- Nota: separada de `instituciones` para que los upserts automáticos
+-- no sobre-escriban estados/decisiones humanas.
+CREATE TABLE IF NOT EXISTS instituciones_gestion (
+  rut TEXT PRIMARY KEY REFERENCES instituciones(rut) ON DELETE CASCADE,
+
+  -- Estado operacional
+  estado TEXT NOT NULL DEFAULT 'pendiente', -- pendiente|contactar|contactado|en_seguimiento|cliente|descartado|bloqueado
+  prioridad INTEGER NOT NULL DEFAULT 3, -- 1 alta, 5 baja
+  asignado_a TEXT,
+
+  -- Señales / decisiones
+  bloqueada BOOLEAN NOT NULL DEFAULT FALSE,
+  motivo_bloqueo TEXT,
+
+  -- Notas y clasificación
+  notas TEXT,
+  etiquetas TEXT[] DEFAULT ARRAY[]::text[],
+
+  -- Metadata libre (para UI/automatizaciones)
+  meta JSONB,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE instituciones_gestion IS 'Campos de gestión manual por institución (no se pisa por scrapers).';
+CREATE INDEX IF NOT EXISTS idx_instituciones_gestion_estado ON instituciones_gestion(estado);
+CREATE INDEX IF NOT EXISTS idx_instituciones_gestion_prioridad ON instituciones_gestion(prioridad ASC);
+
+-- Trigger updated_at para instituciones_gestion
+DROP TRIGGER IF EXISTS update_instituciones_gestion_updated_at ON instituciones_gestion;
+CREATE TRIGGER update_instituciones_gestion_updated_at
+  BEFORE UPDATE ON instituciones_gestion
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Log opcional de interacciones (llamadas/emails/seguimiento)
+CREATE TABLE IF NOT EXISTS instituciones_interacciones (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rut TEXT NOT NULL REFERENCES instituciones(rut) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  tipo TEXT NOT NULL, -- llamada|email|whatsapp|reunion|nota|otro
+  resumen TEXT,
+  resultado TEXT, -- interesado|no_interesado|pendiente|sin_respuesta|otro
+  proxima_accion TEXT,
+  proxima_fecha TIMESTAMPTZ,
+
+  meta JSONB
+);
+
+COMMENT ON TABLE instituciones_interacciones IS 'Bitácora de interacciones/seguimiento por institución.';
+CREATE INDEX IF NOT EXISTS idx_instituciones_interacciones_rut_created ON instituciones_interacciones(rut, created_at DESC);
+
+-- Vista: instituciones con gestión + métricas y links útiles
+CREATE OR REPLACE VIEW instituciones_dashboard AS
+SELECT
+  i.rut,
+  i.nombre,
+  i.division,
+  i.sector,
+  i.region,
+  i.comuna,
+  i.domicilio_legal,
+  i.sitio_web,
+  i.telefono,
+  i.correo,
+
+  i.pago_promedio_dias,
+  i.pago_sigfe,
+  i.reclamos_total,
+  i.oc_total,
+  i.oc_monto_total,
+  i.oc_ultima_fecha,
+  i.last_seen_at,
+
+  -- Gestión (si no hay fila, defaults)
+  COALESCE(g.estado, 'pendiente') AS estado_gestion,
+  COALESCE(g.prioridad, 3) AS prioridad,
+  COALESCE(g.bloqueada, FALSE) AS bloqueada,
+  g.motivo_bloqueo,
+  g.asignado_a,
+  g.etiquetas,
+  g.notas,
+  g.updated_at AS gestion_updated_at,
+
+  -- Links de referencia
+  ('https://comprador.mercadopublico.cl/ficha/' || i.rut) AS link_ficha_comprador
+FROM instituciones i
+LEFT JOIN instituciones_gestion g ON g.rut = i.rut;
+
+COMMENT ON VIEW instituciones_dashboard IS 'Vista para gestión: institución + métricas + estado/prioridad + link a ficha comprador.';
+
+-- Vista: compras ágiles con datos de institución (para UI y gestión)
+CREATE OR REPLACE VIEW compras_agiles_con_institucion AS
+SELECT
+  l.codigo,
+  l.titulo,
+  l.estado,
+  l.publicada_el,
+  l.finaliza_el,
+  l.presupuesto_estimado,
+  l.link_detalle,
+  l.rut_institucion,
+  i.nombre AS institucion_nombre,
+  i.division AS institucion_division,
+  i.region AS institucion_region,
+  i.comuna AS institucion_comuna,
+  COALESCE(g.estado, 'pendiente') AS institucion_estado_gestion,
+  COALESCE(g.prioridad, 3) AS institucion_prioridad,
+  COALESCE(g.bloqueada, FALSE) AS institucion_bloqueada
+FROM licitaciones l
+LEFT JOIN instituciones i ON i.rut = l.rut_institucion
+LEFT JOIN instituciones_gestion g ON g.rut = l.rut_institucion;
+
+COMMENT ON VIEW compras_agiles_con_institucion IS 'Compras ágiles unidas a datos y estado de gestión de la institución por RUT.';
 
 -- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
@@ -488,8 +664,8 @@ SELECT
   l.organismo,
   NULL::text AS descripcion,
   l.estado,
-  (l.publicada_el)::timestamp AS fecha_publicacion,
-  (l.finaliza_el)::timestamp AS fecha_cierre,
+  (l.publicada_el)::timestamptz AS fecha_publicacion,
+  (l.finaliza_el)::timestamptz AS fecha_cierre,
   l.link_detalle,
   l.presupuesto_estimado,
   l.categoria_match,
@@ -504,8 +680,8 @@ SELECT
   a.organismo,
   a.descripcion,
   a.estado,
-  a.fecha_publicacion,
-  a.fecha_cierre,
+  a.fecha_publicacion::timestamptz AS fecha_publicacion,
+  a.fecha_cierre::timestamptz AS fecha_cierre,
   a.link_detalle,
   a.presupuesto_estimado,
   NULL::text AS categoria_match,
@@ -600,7 +776,7 @@ SELECT
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'apertura'::text AS tipo_evento,
-  (l.publicada_el)::timestamp AS fecha,
+  (l.publicada_el)::timestamptz AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.publicada_el IS NOT NULL AND l.publicada_el <> ''
@@ -610,7 +786,7 @@ SELECT
   'compra_agil'::text AS tipo_proceso,
   l.titulo,
   'cierre'::text AS tipo_evento,
-  (l.finaliza_el)::timestamp AS fecha,
+  (l.finaliza_el)::timestamptz AS fecha,
   l.link_detalle
 FROM licitaciones l
 WHERE l.finaliza_el IS NOT NULL AND l.finaliza_el <> ''
@@ -620,7 +796,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'apertura'::text AS tipo_evento,
-  a.fecha_publicacion AS fecha,
+  a.fecha_publicacion::timestamptz AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_publicacion IS NOT NULL
@@ -630,7 +806,7 @@ SELECT
   'licitacion'::text AS tipo_proceso,
   a.titulo,
   'cierre'::text AS tipo_evento,
-  a.fecha_cierre AS fecha,
+  a.fecha_cierre::timestamptz AS fecha,
   a.link_detalle
 FROM licitaciones_api a
 WHERE a.fecha_cierre IS NOT NULL

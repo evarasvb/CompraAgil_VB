@@ -55,9 +55,17 @@ def main() -> None:
             score = match["score"]
             net_price = match["net_price"]
             total_price = match["total_price"]
+            net_cost = match.get("net_cost")
+            net_margin = match.get("net_margin")
+            margin_pct = match.get("margin_pct")
             print(
                 f"  {product} | score: {score:.2f} | "
                 f"net price: {net_price:.2f} | total price: {total_price:.2f}"
+                + (
+                    f" | cost: {net_cost:.2f} | margin: {net_margin:.2f} | margin%: {margin_pct*100:.1f}%"
+                    if net_cost is not None and net_margin is not None and margin_pct is not None
+                    else ""
+                )
             )
 
 
