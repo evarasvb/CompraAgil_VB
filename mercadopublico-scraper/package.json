@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node scraper.js",
     "test": "node scraper.js --test",
+    "api-client": "node api-client.js",
     "oc": "node oc_scraper.js",
     "lic-api": "node licitaciones_api_scraper.js",
     "pending-sync": "node pending_sync_server.js"
