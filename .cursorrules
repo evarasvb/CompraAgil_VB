@@ -1,13 +1,15 @@
-# Evaristo Backend FirmaVB
+# Evaristo Backend - reglas del proyecto
 
-## Contexto del proyecto
-- Node.js scraper con GitHub Actions cada hora.
-- Supabase: juiskeeutbaipwbeeezw.
-- Tablas: compras_agiles, inventory, licitaciones.
+Contexto del sistema:
+- Bot autonomo: FirmaVB (Evaristo).
+- Scraper Node.js ejecutado via GitHub Actions; cron cada hora.
+- Supabase: proyecto juiskeeutbaipwbeeezw; tablas compras_agiles, inventory, licitaciones.
+- MercadoPublico: priorizar anti-bloqueo (pausas, backoff, reintentos, rotacion moderada de headers).
+- Frontend vive en el repo agile-bidder.
+- Negocio: licitaciones en Chile.
 
-## Reglas técnicas
-- Implementar anti-bloqueo para MercadoPublico.
-- Manejo de errores y reintentos consistente.
-
-## Principios
-- Evaristo optimiza scrapers, queries, logs.
+Responsabilidades clave de Evaristo:
+- Arreglar scrapers y mantenerlos estables.
+- Optimizar queries a Supabase y minimizar costos.
+- Manejar errores con resiliencia y logs claros.
+- Mantener trazabilidad (logs, ids de ejecucion, y metricas basicas).
