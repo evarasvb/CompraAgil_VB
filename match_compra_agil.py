@@ -128,6 +128,19 @@ def main() -> None:
         help="Ruta alternativa a archivo de costos (CSV/XLSX). Si se provee, tiene prioridad sobre costs_url.",
     )
     parser.add_argument(
+        "--costs_product_column",
+        default="GP",
+        help="Columna en el archivo de costos que identifica el producto (por defecto GP).",
+    )
+    parser.add_argument(
+        "--costs_cost_column",
+        default="COSTO_NETO",
+        help=(
+            "Columna en el archivo de costos con el costo neto (por defecto COSTO_NETO). "
+            "Si el CSV viene sin esta columna, exporta/normaliza a una columna COSTO_NETO."
+        ),
+    )
+    parser.add_argument(
         "--top_n",
         type=int,
         default=3,
@@ -153,7 +166,13 @@ def main() -> None:
 
     costs_file = args.costs_file.strip() or None
     costs_url = None if costs_file else (args.costs_url.strip() or None)
-    matcher = PriceMatcher(args.price_list_file, costs_file=costs_file, costs_url=costs_url)
+    matcher = PriceMatcher(
+        args.price_list_file,
+        costs_file=costs_file,
+        costs_url=costs_url,
+        costs_product_column=args.costs_product_column,
+        costs_cost_column=args.costs_cost_column,
+    )
     results = matcher.match_items(descriptions, top_n=args.top_n)
 
     df_out = flatten_results(

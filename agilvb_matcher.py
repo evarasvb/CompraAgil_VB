@@ -253,12 +253,12 @@ class PriceMatcher:
 
         # Fallbacks comunes
         if prod_col is None:
-            for k in ["producto", "descripcion", "nombre", "item"]:
+            for k in ["producto", "descripcion", "nombre", "item", "gp", "sku", "codigo"]:
                 if k in colmap:
                     prod_col = colmap[k]
                     break
         if cost_col is None:
-            for k in ["costo", "costo neto", "neto", "cost", "cost net"]:
+            for k in ["costo_neto", "costo neto", "costo", "neto", "cost", "cost net", "costo unitario"]:
                 if k in colmap:
                     cost_col = colmap[k]
                     break
