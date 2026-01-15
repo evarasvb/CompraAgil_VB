@@ -533,6 +533,126 @@ CREATE INDEX IF NOT EXISTS idx_instituciones_oc_total ON instituciones(oc_total 
 CREATE INDEX IF NOT EXISTS idx_instituciones_last_seen ON instituciones(last_seen_at DESC);
 
 -- =====================================================
+-- BASE DE GESTIÓN (CRM liviano) - NO la pisa el scraper
+-- =====================================================
+-- Nota: separada de `instituciones` para que los upserts automáticos
+-- no sobre-escriban estados/decisiones humanas.
+CREATE TABLE IF NOT EXISTS instituciones_gestion (
+  rut TEXT PRIMARY KEY REFERENCES instituciones(rut) ON DELETE CASCADE,
+
+  -- Estado operacional
+  estado TEXT NOT NULL DEFAULT 'pendiente', -- pendiente|contactar|contactado|en_seguimiento|cliente|descartado|bloqueado
+  prioridad INTEGER NOT NULL DEFAULT 3, -- 1 alta, 5 baja
+  asignado_a TEXT,
+
+  -- Señales / decisiones
+  bloqueada BOOLEAN NOT NULL DEFAULT FALSE,
+  motivo_bloqueo TEXT,
+
+  -- Notas y clasificación
+  notas TEXT,
+  etiquetas TEXT[] DEFAULT ARRAY[]::text[],
+
+  -- Metadata libre (para UI/automatizaciones)
+  meta JSONB,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE instituciones_gestion IS 'Campos de gestión manual por institución (no se pisa por scrapers).';
+CREATE INDEX IF NOT EXISTS idx_instituciones_gestion_estado ON instituciones_gestion(estado);
+CREATE INDEX IF NOT EXISTS idx_instituciones_gestion_prioridad ON instituciones_gestion(prioridad ASC);
+
+-- Trigger updated_at para instituciones_gestion
+DROP TRIGGER IF EXISTS update_instituciones_gestion_updated_at ON instituciones_gestion;
+CREATE TRIGGER update_instituciones_gestion_updated_at
+  BEFORE UPDATE ON instituciones_gestion
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Log opcional de interacciones (llamadas/emails/seguimiento)
+CREATE TABLE IF NOT EXISTS instituciones_interacciones (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rut TEXT NOT NULL REFERENCES instituciones(rut) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  tipo TEXT NOT NULL, -- llamada|email|whatsapp|reunion|nota|otro
+  resumen TEXT,
+  resultado TEXT, -- interesado|no_interesado|pendiente|sin_respuesta|otro
+  proxima_accion TEXT,
+  proxima_fecha TIMESTAMPTZ,
+
+  meta JSONB
+);
+
+COMMENT ON TABLE instituciones_interacciones IS 'Bitácora de interacciones/seguimiento por institución.';
+CREATE INDEX IF NOT EXISTS idx_instituciones_interacciones_rut_created ON instituciones_interacciones(rut, created_at DESC);
+
+-- Vista: instituciones con gestión + métricas y links útiles
+CREATE OR REPLACE VIEW instituciones_dashboard AS
+SELECT
+  i.rut,
+  i.nombre,
+  i.division,
+  i.sector,
+  i.region,
+  i.comuna,
+  i.domicilio_legal,
+  i.sitio_web,
+  i.telefono,
+  i.correo,
+
+  i.pago_promedio_dias,
+  i.pago_sigfe,
+  i.reclamos_total,
+  i.oc_total,
+  i.oc_monto_total,
+  i.oc_ultima_fecha,
+  i.last_seen_at,
+
+  -- Gestión (si no hay fila, defaults)
+  COALESCE(g.estado, 'pendiente') AS estado_gestion,
+  COALESCE(g.prioridad, 3) AS prioridad,
+  COALESCE(g.bloqueada, FALSE) AS bloqueada,
+  g.motivo_bloqueo,
+  g.asignado_a,
+  g.etiquetas,
+  g.notas,
+  g.updated_at AS gestion_updated_at,
+
+  -- Links de referencia
+  ('https://comprador.mercadopublico.cl/ficha/' || i.rut) AS link_ficha_comprador
+FROM instituciones i
+LEFT JOIN instituciones_gestion g ON g.rut = i.rut;
+
+COMMENT ON VIEW instituciones_dashboard IS 'Vista para gestión: institución + métricas + estado/prioridad + link a ficha comprador.';
+
+-- Vista: compras ágiles con datos de institución (para UI y gestión)
+CREATE OR REPLACE VIEW compras_agiles_con_institucion AS
+SELECT
+  l.codigo,
+  l.titulo,
+  l.estado,
+  l.publicada_el,
+  l.finaliza_el,
+  l.presupuesto_estimado,
+  l.link_detalle,
+  l.rut_institucion,
+  i.nombre AS institucion_nombre,
+  i.division AS institucion_division,
+  i.region AS institucion_region,
+  i.comuna AS institucion_comuna,
+  COALESCE(g.estado, 'pendiente') AS institucion_estado_gestion,
+  COALESCE(g.prioridad, 3) AS institucion_prioridad,
+  COALESCE(g.bloqueada, FALSE) AS institucion_bloqueada
+FROM licitaciones l
+LEFT JOIN instituciones i ON i.rut = l.rut_institucion
+LEFT JOIN instituciones_gestion g ON g.rut = l.rut_institucion;
+
+COMMENT ON VIEW compras_agiles_con_institucion IS 'Compras ágiles unidas a datos y estado de gestión de la institución por RUT.';
+
+-- =====================================================
 -- VISTA UNIFICADA: OPORTUNIDADES (Compra Ágil vs Licitación grande)
 -- =====================================================
 
