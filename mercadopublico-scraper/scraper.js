@@ -11,6 +11,91 @@ puppeteer.use(StealthPlugin());
 const config = require('./config');
 const { parseDateCL, parseBudgetCLP, splitOrganismoDepartamento, sleepRandom, toIsoNow } = require('./utils');
 
+// -----------------------------
+// Anti-bloqueo (CloudFront/WAF)
+// -----------------------------
+// Requerimiento: rotar User-Agents entre Chrome 120-125.
+const CHROME_UAS_120_125 = [
+  // Windows
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  // macOS
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  // Linux
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+];
+
+function randomInt(min, max) {
+  const lo = Math.ceil(min);
+  const hi = Math.floor(max);
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+}
+
+function pickRandom(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomViewport() {
+  // Requerimiento: viewport aleatorio 1280-1920 de ancho
+  const width = randomInt(1280, 1920);
+  // Alturas plausibles (evita fingerprints raros)
+  const height = Math.max(720, Math.min(1080, randomInt(Math.round(width * 0.56), Math.round(width * 0.75))));
+  return { width, height };
+}
+
+function buildRealisticNavigationHeaders({ referer } = {}) {
+  return {
+    Accept:
+      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-site',
+    'Sec-Fetch-User': '?1',
+    ...(referer ? { Referer: referer } : {})
+  };
+}
+
+async function applyAntiBlockProfile(page, { referer } = {}) {
+  const ua = pickRandom(CHROME_UAS_120_125) || config.getRandomUserAgent();
+  await page.setViewport(randomViewport());
+  await page.setUserAgent(ua);
+  await page.setExtraHTTPHeaders(buildRealisticNavigationHeaders({ referer }));
+  return { ua };
+}
+
+function is403OrBlockError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('http 403') ||
+    msg.includes('403') ||
+    msg.includes('access denied') ||
+    msg.includes('captcha') ||
+    msg.includes('robot') ||
+    msg.includes('bloqueo') ||
+    msg.includes('blocked') ||
+    msg.includes('waf')
+  );
+}
+
 function parseArgs(argv) {
   const args = {
     test: false,
@@ -178,7 +263,12 @@ async function gotoListadoConResiliencia(page, url, { retries }) {
       const label = `Listado intento ${attempt}/${retries}`;
       const t0 = Date.now();
       console.log(`[${ts()}] ${label}: goto ${url}`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      // Requerimiento: delays aleatorios 3-8 segundos entre requests + rotación de fingerprint.
+      await applyAntiBlockProfile(page, { referer: 'https://www.mercadopublico.cl/' });
+      await sleepRandom(3000, 8000);
+      const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      const status = resp ? resp.status() : null;
+      if (status === 403) throw new Error('HTTP 403 (posible bloqueo CloudFront/WAF) en listado.');
       console.log(`[${ts()}] ${label}: domcontentloaded en ${Date.now() - t0}ms`);
 
       // Requerido: si en 30s no aparecen elementos/datos, fallar para forzar reload+retry.
@@ -189,13 +279,19 @@ async function gotoListadoConResiliencia(page, url, { retries }) {
       onRetry: async (err, attempt) => {
         console.warn(`[${ts()}] Listado falló (intento ${attempt}/${retries}): ${stringifyErr(err)}`);
         await debugDumpPage(page);
+        if (is403OrBlockError(err)) {
+          // Requerimiento: si detecta 403 o bloqueo, esperar 30 segundos y reintentar con diferentes headers
+          console.warn(`[${ts()}] Bloqueo/403 detectado: esperando 30s y rotando headers/UA/viewport...`);
+          await sleepRandom(30000, 30000);
+          await applyAntiBlockProfile(page, { referer: 'https://www.mercadopublico.cl/' });
+        }
         console.warn(`[${ts()}] Recargando página y reintentando...`);
         try {
           await page.reload({ waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
         } catch (e) {
           console.warn(`[${ts()}] reload() falló: ${stringifyErr(e)}`);
         }
-        await sleepRandom(600, 1400);
+        await sleepRandom(3000, 8000);
       }
     }
   );
@@ -456,7 +552,11 @@ async function scrapeCompraDetallada(page, codigo) {
       const label = `Detalle ${codigo} intento ${attempt}/2`;
       const t0 = Date.now();
       console.log(`[${ts()}] ${label}: goto ${url}`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      await applyAntiBlockProfile(page, { referer: 'https://buscador.mercadopublico.cl/' });
+      await sleepRandom(3000, 8000);
+      const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+      const status = resp ? resp.status() : null;
+      if (status === 403) throw new Error('HTTP 403 (posible bloqueo CloudFront/WAF) en detalle.');
       console.log(`[${ts()}] ${label}: domcontentloaded en ${Date.now() - t0}ms`);
 
       // Requerido: waitForFunction para detectar que ya hay datos.
@@ -480,13 +580,18 @@ async function scrapeCompraDetallada(page, codigo) {
       onRetry: async (err, attempt) => {
         console.warn(`[${ts()}] Detalle ${codigo} falló (intento ${attempt}/2): ${stringifyErr(err)}`);
         await debugDumpPage(page);
+        if (is403OrBlockError(err)) {
+          console.warn(`[${ts()}] Detalle ${codigo}: bloqueo/403 detectado, esperando 30s y rotando fingerprint...`);
+          await sleepRandom(30000, 30000);
+          await applyAntiBlockProfile(page, { referer: 'https://buscador.mercadopublico.cl/' });
+        }
         console.warn(`[${ts()}] Detalle ${codigo}: reload() y reintento...`);
         try {
           await page.reload({ waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
         } catch (e) {
           console.warn(`[${ts()}] Detalle ${codigo}: reload() falló: ${stringifyErr(e)}`);
         }
-        await sleepRandom(600, 1400);
+        await sleepRandom(3000, 8000);
       }
     }
   );
@@ -726,18 +831,10 @@ async function main() {
       window.chrome = window.chrome || { runtime: {} };
     } catch (_) {}
   });
-  await page.setViewport({ width: 1440, height: 900 });
+  await applyAntiBlockProfile(page, { referer: 'https://www.mercadopublico.cl/' });
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
   // Requerido: default timeout 30s para esperas/seletores/funciones.
   page.setDefaultTimeout(30000);
-  await page.setUserAgent(
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  );
-  await page.setExtraHTTPHeaders({
-    'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
-    Accept: 'text/html,application/xhtml+xml',
-    Referer: 'https://www.mercadopublico.cl/'
-  });
 
   const allCompras = [];
   const startPage = 1;
@@ -797,7 +894,8 @@ async function main() {
 
         if (maxPages && currentPage >= maxPages) break;
         currentPage += 1;
-        await sleepRandom(config.delayBetweenPagesMs.min, config.delayBetweenPagesMs.max);
+        // Requerimiento: delays aleatorios 3-8 segundos entre requests
+        await sleepRandom(3000, 8000);
         continue;
       }
 
@@ -880,17 +978,9 @@ async function main() {
               window.chrome = window.chrome || { runtime: {} };
             } catch (_) {}
           });
-          await detailPage.setViewport({ width: 1440, height: 900 });
+          await applyAntiBlockProfile(detailPage, { referer: 'https://buscador.mercadopublico.cl/' });
           detailPage.setDefaultNavigationTimeout(config.navigationTimeoutMs);
           detailPage.setDefaultTimeout(30000);
-          await detailPage.setUserAgent(
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          );
-          await detailPage.setExtraHTTPHeaders({
-            'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
-            Accept: 'text/html,application/xhtml+xml',
-            Referer: 'https://www.mercadopublico.cl/'
-          });
 
           try {
             const detalle = await withRetries(
@@ -900,7 +990,11 @@ async function main() {
                 retries: 2,
                 onRetry: async (err, attempt) => {
                   console.warn(`Retry detalle (${compra.codigo}) intento ${attempt}/${config.maxRetries}: ${String(err?.message || err)}`);
-                  await sleepRandom(1200, 2400);
+                  if (is403OrBlockError(err)) {
+                    await sleepRandom(30000, 30000);
+                    await applyAntiBlockProfile(detailPage, { referer: 'https://buscador.mercadopublico.cl/' });
+                  }
+                  await sleepRandom(3000, 8000);
                 }
               }
             );
@@ -968,7 +1062,8 @@ async function main() {
       if (!maxPages && args.test) break;
 
       currentPage += 1;
-      await sleepRandom(config.delayBetweenPagesMs.min, config.delayBetweenPagesMs.max);
+      // Requerimiento: delays aleatorios 3-8 segundos entre requests
+      await sleepRandom(3000, 8000);
     }
   } catch (err) {
     console.error('Error durante el scraping:', err);
