@@ -351,17 +351,36 @@ async function extractComprasFromPage(page) {
 }
 
 function getSupabaseClientOrNull({ allowNull }) {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY;
+  const url = process.env.SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_KEY?.trim();
 
   if (!url || !key) {
-    if (allowNull) return null;
-    throw new Error('Faltan variables de entorno SUPABASE_URL y/o SUPABASE_KEY.');
+    if (allowNull) {
+      console.warn('[Config] Modo dry-run: SUPABASE_URL o SUPABASE_KEY no configurados. No se escribirán datos.');
+      return null;
+    }
+    const faltantes = [];
+    if (!url) faltantes.push('SUPABASE_URL');
+    if (!key) faltantes.push('SUPABASE_KEY');
+    throw new Error(`Faltan variables de entorno requeridas: ${faltantes.join(', ')}. Configúralas en .env o como variables de entorno.`);
   }
 
-  return createClient(url, key, {
-    auth: { persistSession: false }
-  });
+  // Validación básica de formato
+  if (!url.startsWith('https://') || !url.includes('.supabase.co')) {
+    throw new Error(`SUPABASE_URL tiene formato inválido. Debe ser: https://xxxxx.supabase.co`);
+  }
+
+  if (key.length < 20) {
+    throw new Error(`SUPABASE_KEY parece inválida (muy corta). Verifica que sea la key correcta.`);
+  }
+
+  try {
+    return createClient(url, key, {
+      auth: { persistSession: false }
+    });
+  } catch (err) {
+    throw new Error(`Error al crear cliente Supabase: ${err.message}`);
+  }
 }
 
 async function debugDumpPage(page) {
@@ -393,8 +412,8 @@ async function upsertLicitaciones(supabase, rows) {
     if (error) throw error;
   }
 
-  // Escribir logs reales en system_logs
-  if (rows.length > 0) {
+  // Escribir logs reales en system_logs con retry y validación
+  if (rows.length > 0 && supabase) {
     const logEntries = rows.map(lic => ({
       tipo: 'scraping',
       severidad: 'success',
@@ -405,24 +424,62 @@ async function upsertLicitaciones(supabase, rows) {
         organismo: lic.organismo,
         presupuesto: lic.presupuesto_estimado,
         estado: lic.estado,
+        fecha_extraccion: new Date().toISOString(),
       }
     }));
 
-    // Insertar logs en batches para evitar problemas de tamaño
+    // Insertar logs en batches con retry automático
     const logBatches = chunkArray(logEntries, 50);
+    let logsExitosos = 0;
+    let logsFallidos = 0;
+
     for (const logBatch of logBatches) {
-      try {
-        const { error: logError } = await supabase
-          .from('system_logs')
-          .insert(logBatch);
-        if (logError) {
-          // No fallar si los logs no se pueden escribir, solo loguear
-          console.warn(`No se pudieron escribir logs (continuando): ${logError.message}`);
+      const resultado = await withRetries(
+        async () => {
+          const { error: logError, data } = await supabase
+            .from('system_logs')
+            .insert(logBatch)
+            .select();
+          
+          if (logError) {
+            // Error de RLS o tabla no existe
+            if (logError.code === 'PGRST301' || logError.message?.includes('permission denied')) {
+              throw new Error(`Permisos insuficientes para escribir logs: ${logError.message}`);
+            }
+            if (logError.code === '42P01' || logError.message?.includes('does not exist')) {
+              throw new Error('Tabla system_logs no existe en la base de datos');
+            }
+            throw logError;
+          }
+          
+          return data?.length || logBatch.length;
+        },
+        {
+          retries: 2, // 2 reintentos adicionales (total 3 intentos)
+          onRetry: async (err, attempt) => {
+            console.warn(`[Logs] Reintento ${attempt}/2: ${String(err?.message || err).slice(0, 100)}`);
+            await sleepRandom(500, 1500);
+          }
         }
-      } catch (e) {
-        // Si la tabla no existe o hay error, continuar sin fallar
-        console.warn(`Tabla system_logs no disponible (continuando): ${String(e?.message || e)}`);
+      ).catch(err => {
+        // Si falla después de todos los reintentos, registrar pero no fallar
+        console.warn(`[Logs] No se pudieron escribir ${logBatch.length} logs después de reintentos: ${String(err?.message || err).slice(0, 150)}`);
+        return null;
+      });
+
+      if (resultado) {
+        logsExitosos += resultado;
+      } else {
+        logsFallidos += logBatch.length;
       }
+    }
+
+    // Resumen de escritura de logs
+    if (logsExitosos > 0) {
+      console.log(`[Logs] ✅ ${logsExitosos} logs escritos exitosamente en system_logs`);
+    }
+    if (logsFallidos > 0) {
+      console.warn(`[Logs] ⚠️  ${logsFallidos} logs no pudieron escribirse (continuando sin fallar)`);
     }
   }
 }
@@ -1028,8 +1085,32 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Fallo fatal:', err);
-  process.exitCode = 1;
-});
+// Ejecución principal con manejo robusto de errores
+main()
+  .then(() => {
+    console.log('\n✅ Scraper completado exitosamente');
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('\n❌ FALLO FATAL DEL SCRAPER:');
+    console.error('─'.repeat(60));
+    console.error(`Error: ${err.message || String(err)}`);
+    if (err.stack) {
+      console.error('\nStack trace:');
+      console.error(err.stack.split('\n').slice(0, 5).join('\n')); // Solo primeras 5 líneas
+    }
+    console.error('─'.repeat(60));
+    console.error('\n💡 Posibles causas:');
+    console.error('  - MercadoPúblico cambió su estructura HTML');
+    console.error('  - Problemas de red o timeout');
+    console.error('  - Credenciales de Supabase inválidas');
+    console.error('  - Tablas de base de datos no existen');
+    console.error('\n🔧 Acciones sugeridas:');
+    console.error('  - Verifica tu conexión a internet');
+    console.error('  - Revisa las variables de entorno (.env)');
+    console.error('  - Ejecuta con --test para modo diagnóstico');
+    console.error('  - Ejecuta con --headed para ver qué pasa visualmente');
+    process.exitCode = 1;
+    process.exit(1);
+  });
 
