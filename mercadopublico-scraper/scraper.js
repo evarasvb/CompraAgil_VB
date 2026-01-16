@@ -513,15 +513,18 @@ async function upsertComprasAgiles(supabase, licitacionesRows) {
            lic.presupuesto_estimado <= (5000 * UTM_2026) ? 'LP' : 'LR')
         : 'L1';
       
+      // Extraer información adicional de datos_json si existe
+      const datosAdicionales = lic.datos_json || {};
+      
       const row = {
         codigo: lic.codigo,
         nombre: lic.titulo || `Compra Ágil ${lic.codigo}`,
-        nombre_organismo: lic.organismo || 'Organismo no especificado',
+        nombre_organismo: lic.organismo || datosAdicionales.organismo_nombre || 'Organismo no especificado',
         monto_estimado: lic.presupuesto_estimado || null,
         fecha_cierre: lic.finaliza_el || null,
         estado: lic.estado_detallado || lic.estado || 'activa',
-        region: lic.departamento || null,
-        descripcion: lic.titulo || null,
+        region: datosAdicionales.region || lic.departamento || datosAdicionales.comuna || null,
+        descripcion: datosAdicionales.descripcion_completa || lic.titulo || null,
         // IMPORTANTE: Establecer match_encontrado en false para que aparezcan como "nuevas"
         match_encontrado: false,
         match_score: null,
@@ -535,7 +538,26 @@ async function upsertComprasAgiles(supabase, licitacionesRows) {
           link_detalle: lic.link_detalle || null,
           monto_utm: montoUTM,
           categoria: clasificacion,
-          tipo_proceso: 'compra_agil' // Clasificado como compra ágil (<= 100 UTM)
+          tipo_proceso: 'compra_agil', // Clasificado como compra ágil (<= 100 UTM)
+          // Incluir TODA la información adicional extraída
+          ...datosAdicionales,
+          // Información de contacto
+          organismo_rut: datosAdicionales.organismo_rut || null,
+          organismo_direccion: datosAdicionales.organismo_direccion || null,
+          contacto_email: datosAdicionales.contacto_email || null,
+          contacto_telefono: datosAdicionales.contacto_telefono || null,
+          responsable: datosAdicionales.responsable || null,
+          // Información de entrega y pago
+          condiciones_pago: datosAdicionales.condiciones_pago || null,
+          plazo_entrega: datosAdicionales.plazo_entrega || null,
+          forma_pago: datosAdicionales.forma_pago || null,
+          lugar_entrega: datosAdicionales.lugar_entrega || null,
+          // Información adicional
+          unidad_compra: datosAdicionales.unidad_compra || null,
+          comuna: datosAdicionales.comuna || null,
+          moneda: datosAdicionales.moneda || 'CLP',
+          tipo_proceso_detalle: datosAdicionales.tipo_proceso || null,
+          modalidad: datosAdicionales.modalidad || null
         }
       };
       
@@ -715,9 +737,103 @@ async function scrapeCompraDetallada(page, codigo) {
       return out.slice(0, 50);
     }
 
+    // Extraer TODA la información adicional de la ficha
+    function extractInformacionAdicional() {
+      const bodyText = norm(document.body.innerText || document.body.textContent || '');
+      const info = {};
+
+      // Región: buscar "Región" o "Comuna" o nombres de regiones chilenas
+      const regiones = ['Arica y Parinacota', 'Tarapacá', 'Antofagasta', 'Atacama', 'Coquimbo', 
+                       'Valparaíso', 'Metropolitana', 'O\'Higgins', 'Maule', 'Ñuble', 
+                       'Biobío', 'Araucanía', 'Los Ríos', 'Los Lagos', 'Aysén', 'Magallanes'];
+      for (const reg of regiones) {
+        if (bodyText.includes(reg)) {
+          info.region = reg;
+          break;
+        }
+      }
+      if (!info.region) {
+        const regionMatch = bodyText.match(/Regi[oó]n[:\s]+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ\s]+)/i);
+        if (regionMatch) info.region = norm(regionMatch[1]);
+      }
+
+      // Comuna
+      const comunaMatch = bodyText.match(/Comuna[:\s]+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ\s]+)/i);
+      if (comunaMatch) info.comuna = norm(comunaMatch[1]);
+
+      // Descripción completa: buscar sección de descripción
+      const descHeading = findHeading('descripción') || findHeading('objeto') || findHeading('detalle');
+      if (descHeading) {
+        let descNode = descHeading.nextElementSibling || descHeading.parentElement;
+        let descText = '';
+        for (let i = 0; i < 5 && descNode; i++) {
+          const text = textOf(descNode);
+          if (text.length > 50) {
+            descText = text;
+            break;
+          }
+          descNode = descNode.nextElementSibling || descNode.parentElement;
+        }
+        if (descText) info.descripcion_completa = descText.substring(0, 5000);
+      }
+
+      // Información del organismo (RUT, dirección, contacto)
+      const rutMatch = bodyText.match(/RUT[:\s]+([\d\.]+-[\dkK])/i);
+      if (rutMatch) info.organismo_rut = rutMatch[1];
+
+      const direccionMatch = bodyText.match(/Direcci[oó]n[:\s]+([A-ZÁÉÍÓÚÑ0-9\s,\.-]+)/i);
+      if (direccionMatch) info.organismo_direccion = norm(direccionMatch[1].substring(0, 200));
+
+      // Contacto: email y teléfono
+      const emailMatch = bodyText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch) info.contacto_email = emailMatch[1];
+
+      const telefonoMatch = bodyText.match(/(\+?56\s?)?[\s]?([2-9]\d{8})/);
+      if (telefonoMatch) info.contacto_telefono = telefonoMatch[0].trim();
+
+      // Condiciones de pago
+      const pagoMatch = bodyText.match(/Pago[:\s]+([^\.]+)/i) || bodyText.match(/Condiciones de pago[:\s]+([^\.]+)/i);
+      if (pagoMatch) info.condiciones_pago = norm(pagoMatch[1].substring(0, 500));
+
+      // Plazo de entrega
+      const entregaMatch = bodyText.match(/Plazo de entrega[:\s]+([^\.]+)/i) || bodyText.match(/Entrega[:\s]+([^\.]+)/i);
+      if (entregaMatch) info.plazo_entrega = norm(entregaMatch[1].substring(0, 200));
+
+      // Forma de pago
+      const formaPagoMatch = bodyText.match(/Forma de pago[:\s]+([^\.]+)/i);
+      if (formaPagoMatch) info.forma_pago = norm(formaPagoMatch[1].substring(0, 200));
+
+      // Lugar de entrega
+      const lugarEntregaMatch = bodyText.match(/Lugar de entrega[:\s]+([^\.]+)/i);
+      if (lugarEntregaMatch) info.lugar_entrega = norm(lugarEntregaMatch[1].substring(0, 500));
+
+      // Unidad de compra
+      const unidadCompraMatch = bodyText.match(/Unidad de compra[:\s]+([^\.]+)/i);
+      if (unidadCompraMatch) info.unidad_compra = norm(unidadCompraMatch[1].substring(0, 200));
+
+      // Responsable de la compra
+      const responsableMatch = bodyText.match(/Responsable[:\s]+([^\.]+)/i) || bodyText.match(/Contacto[:\s]+([^\.]+)/i);
+      if (responsableMatch) info.responsable = norm(responsableMatch[1].substring(0, 200));
+
+      // Moneda
+      const monedaMatch = bodyText.match(/Moneda[:\s]+([A-Z]{3})/i);
+      if (monedaMatch) info.moneda = monedaMatch[1];
+
+      // Tipo de proceso
+      const tipoMatch = bodyText.match(/Tipo[:\s]+([^\.]+)/i);
+      if (tipoMatch) info.tipo_proceso = norm(tipoMatch[1].substring(0, 100));
+
+      // Modalidad
+      const modalidadMatch = bodyText.match(/Modalidad[:\s]+([^\.]+)/i);
+      if (modalidadMatch) info.modalidad = norm(modalidadMatch[1].substring(0, 100));
+
+      return info;
+    }
+
     return {
       productos: extractProductos(),
-      documentos: extractDocumentos()
+      documentos: extractDocumentos(),
+      informacion_adicional: extractInformacionAdicional()
     };
   });
 
@@ -941,7 +1057,9 @@ async function main() {
       const licRows = comprasNuevas.map((c) => ({
         ...c,
         nombre: c.titulo || `Compra Ágil ${c.codigo}`, // Asegurar que nombre no sea null
-        fecha_extraccion: nowIso
+        fecha_extraccion: nowIso,
+        // Incluir datos_json para almacenar información adicional que se extraerá después
+        datos_json: c.datos_json || {}
       }));
 
       if (dryRun) {
@@ -1004,6 +1122,53 @@ async function main() {
             );
 
             const productos = Array.isArray(detalle.productos) ? detalle.productos : [];
+            const infoAdicional = detalle.informacion_adicional || {};
+
+            // Actualizar licitación con información adicional extraída de la ficha
+            if (Object.keys(infoAdicional).length > 0 && !dryRun && supabase) {
+              try {
+                const updateData = {
+                  datos_json: {
+                    ...(compra.datos_json || {}),
+                    ...infoAdicional,
+                    fecha_actualizacion_detalle: nowIso,
+                    productos_extraidos: productos.length,
+                    documentos_extraidos: (detalle.documentos || []).length
+                  }
+                };
+                
+                // Agregar campos específicos si existen en la tabla licitaciones
+                if (infoAdicional.region) updateData.region = infoAdicional.region;
+                if (infoAdicional.descripcion_completa) {
+                  updateData.descripcion = infoAdicional.descripcion_completa;
+                  updateData.estado_detallado = infoAdicional.descripcion_completa.substring(0, 500);
+                }
+                
+                await supabase
+                  .from('licitaciones')
+                  .update(updateData)
+                  .eq('codigo', compra.codigo);
+                  
+                // También actualizar compras_agiles si es una compra ágil
+                if (esCompraAgil(compra.presupuesto_estimado)) {
+                  const compraAgilUpdate = {
+                    datos_json: {
+                      ...updateData.datos_json,
+                      fecha_actualizacion_detalle: nowIso
+                    }
+                  };
+                  if (infoAdicional.region) compraAgilUpdate.region = infoAdicional.region;
+                  if (infoAdicional.descripcion_completa) compraAgilUpdate.descripcion = infoAdicional.descripcion_completa;
+                  
+                  await supabase
+                    .from('compras_agiles')
+                    .update(compraAgilUpdate)
+                    .eq('codigo', compra.codigo);
+                }
+              } catch (updateErr) {
+                console.warn(`No se pudo actualizar información adicional para ${compra.codigo}: ${updateErr.message}`);
+              }
+            }
 
             // Normalización y persistencia de items
             const sorted = productos.slice().sort((a, b) => {
