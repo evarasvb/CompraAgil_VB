@@ -1,8 +1,9 @@
-# 📊 Resumen de Cambios - Base de Datos Supabase
+# Resumen Mejoras Inventario y Matching - Supabase
 
-**Proyecto**: CompraAgil_VB  
-**Fecha**: 2026-01-17  
-**Estado**: ✅ Migración aplicada exitosamente
+**Proyecto:** CompraAgil_VB  
+**Fecha:** 17 Enero 2026  
+**Migración:** 20260117000000_add_costo_neto_margen_comercial_inventory.sql  
+**Estado:** ✅ Aplicada exitosamente
 
 ---
 
@@ -16,87 +17,85 @@ Implementar mejoras en el sistema de inventario y matching para permitir:
 
 ---
 
-## 📋 Migraciones Aplicadas
+## 1. Campos Nuevos en Tabla `inventory` (2)
 
-### Migración: `20260117000000_add_costo_neto_margen_comercial_inventory.sql`
+| Campo | Tipo | Descripción | Estado |
+|-------|------|-------------|--------|
+| costo_neto | NUMERIC NOT NULL | Costo de adquisición del producto | ✅ |
+| margen_comercial | NUMERIC | Margen calculado: (precio - costo) / precio * 100 | ✅ |
 
-**Estado**: ✅ **APLICADA EXITOSAMENTE**
+**Migración de datos existentes:**
+- Productos existentes → `costo_neto = precio_unitario * 0.8` (estimación)
+- Margen calculado automáticamente para todos los productos
 
-#### Cambios en Tabla `inventory`:
+## 2. Campos Nuevos en Tabla `user_settings` (1)
 
-1. **Nuevo Campo: `costo_neto`**
-   - Tipo: `NUMERIC NOT NULL`
-   - Descripción: Costo de adquisición del producto (obligatorio)
-   - Valor por defecto: `0` (migrado a 80% del precio para productos existentes)
-   - Impacto: Permite calcular margen comercial
+| Campo | Tipo | Descripción | Estado |
+|-------|------|-------------|--------|
+| regiones_config | JSONB | Configuración de regiones con recargos | ✅ |
 
-2. **Nuevo Campo: `margen_comercial`**
-   - Tipo: `NUMERIC` (nullable)
-   - Descripción: Margen comercial calculado automáticamente
-   - Fórmula: `(precio_unitario - costo_neto) / precio_unitario * 100`
-   - Actualización: Automática mediante trigger
+**Estructura:**
+```json
+[
+  {"nombre": "Metropolitana", "activa": true, "recargo_porcentaje": 0},
+  {"nombre": "Valparaíso", "activa": true, "recargo_porcentaje": 5}
+]
+```
 
-#### Cambios en Tabla `user_settings`:
+**Migración:** Datos de `regions` migrados automáticamente a `regiones_config`
 
-3. **Nuevo Campo: `regiones_config`**
-   - Tipo: `JSONB DEFAULT '[]'::jsonb`
-   - Descripción: Configuración de regiones con recargos
-   - Estructura:
-     ```json
-     [
-       {
-         "nombre": "Metropolitana",
-         "activa": true,
-         "recargo_porcentaje": 0
-       },
-       {
-         "nombre": "Valparaíso",
-         "activa": true,
-         "recargo_porcentaje": 5
-       }
-     ]
-     ```
-   - Migración: Datos de `regions` migrados automáticamente
+## 3. Funciones Creadas (1)
 
----
+| Función | Descripción | Estado |
+|---------|-------------|--------|
+| calcular_margen_comercial(precio, costo) | Calcula margen comercial automáticamente | ✅ |
 
-## 🔧 Funciones y Triggers Creados
+**Validaciones:**
+- precio > 0
+- costo >= 0
+- precio > costo (retorna 0 si costo >= precio)
 
-### Función: `calcular_margen_comercial(precio_unitario, costo_neto)`
-- **Tipo**: `IMMUTABLE`
-- **Retorna**: `NUMERIC` (porcentaje de margen)
-- **Lógica**:
-  - Valida que precio > 0 y costo >= 0
-  - Calcula: `(precio - costo) / precio * 100`
-  - Retorna `0` si costo >= precio
-  - Retorna `NULL` si datos inválidos
+## 4. Triggers Creados (1)
 
-### Trigger: `trigger_update_margen_comercial`
-- **Tabla**: `inventory`
-- **Evento**: `BEFORE INSERT OR UPDATE OF precio_unitario, costo_neto`
-- **Función**: `update_margen_comercial_trigger()`
-- **Acción**: Calcula y actualiza `margen_comercial` automáticamente
+| Trigger | Tabla | Evento | Acción | Estado |
+|---------|-------|--------|--------|--------|
+| trigger_update_margen_comercial | inventory | BEFORE INSERT OR UPDATE OF precio_unitario, costo_neto | Actualiza margen_comercial automáticamente | ✅ |
+
+## 5. Índices Creados (1)
+
+| Índice | Tabla | Condición | Estado |
+|--------|-------|-----------|--------|
+| idx_inventory_margen_comercial | inventory | WHERE margen_comercial IS NOT NULL | ✅ |
 
 ---
 
-## 📊 Índices Creados
+## Detalles Técnicos
 
-- `idx_inventory_margen_comercial`: Índice parcial para búsquedas por margen
-  - Condición: `WHERE margen_comercial IS NOT NULL`
+### Cambios en Tabla `inventory`:
+
+**costo_neto:**
+- Tipo: `NUMERIC NOT NULL`
+- Descripción: Costo de adquisición del producto (obligatorio)
+- Migración: Productos existentes → 80% del precio como estimación
+
+**margen_comercial:**
+- Tipo: `NUMERIC` (nullable)
+- Descripción: Margen comercial calculado automáticamente
+- Fórmula: `(precio_unitario - costo_neto) / precio_unitario * 100`
+- Actualización: Automática mediante trigger
+
+### Cambios en Tabla `user_settings`:
+
+**regiones_config:**
+- Tipo: `JSONB DEFAULT '[]'::jsonb`
+- Descripción: Configuración de regiones con recargos
+- Migración: Datos de `regions` migrados automáticamente
 
 ---
 
-## 🔄 Migración de Datos Existentes
+## Archivo de Migración
 
-### Productos Existentes (`inventory`):
-- **Costo estimado**: Se asignó `precio_unitario * 0.8` como costo inicial
-- **Margen calculado**: Se calculó automáticamente para todos los productos existentes
-- **Total afectado**: Todos los registros en `inventory`
-
-### Configuración de Usuarios (`user_settings`):
-- **Migración de `regions` a `regiones_config`**: Automática
-- **Formato**: Array de strings → Array de objetos con `nombre`, `activa`, `recargo_porcentaje`
-- **Valor por defecto**: `recargo_porcentaje = 0` para regiones migradas
+`mercadopublico-scraper/agile-bidder/supabase/migrations/20260117000000_add_costo_neto_margen_comercial_inventory.sql`
 
 ---
 

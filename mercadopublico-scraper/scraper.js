@@ -392,6 +392,39 @@ async function upsertLicitaciones(supabase, rows) {
       .upsert(batch, { onConflict: 'codigo' });
     if (error) throw error;
   }
+
+  // Escribir logs reales en system_logs
+  if (rows.length > 0) {
+    const logEntries = rows.map(lic => ({
+      tipo: 'scraping',
+      severidad: 'success',
+      mensaje: `Licitación ${lic.codigo}: ${lic.titulo || 'Sin título'} – ${lic.organismo || 'Organismo no especificado'}`,
+      licitacion_id: lic.codigo,
+      detalles: {
+        codigo: lic.codigo,
+        organismo: lic.organismo,
+        presupuesto: lic.presupuesto_estimado,
+        estado: lic.estado,
+      }
+    }));
+
+    // Insertar logs en batches para evitar problemas de tamaño
+    const logBatches = chunkArray(logEntries, 50);
+    for (const logBatch of logBatches) {
+      try {
+        const { error: logError } = await supabase
+          .from('system_logs')
+          .insert(logBatch);
+        if (logError) {
+          // No fallar si los logs no se pueden escribir, solo loguear
+          console.warn(`No se pudieron escribir logs (continuando): ${logError.message}`);
+        }
+      } catch (e) {
+        // Si la tabla no existe o hay error, continuar sin fallar
+        console.warn(`Tabla system_logs no disponible (continuando): ${String(e?.message || e)}`);
+      }
+    }
+  }
 }
 
 // Constantes para clasificación

@@ -1,91 +1,17 @@
-═══════════════════════════════════════════════════════════════
-  RESUMEN EJECUTIVO - MIGRACIÓN APLICADA
-  CompraAgil_VB - Supabase Database
-═══════════════════════════════════════════════════════════════
+RESUMEN EJECUTIVO - Mejoras Inventario y Matching (CompraAgil_VB)
+====================================================================
 
-✅ MIGRACIÓN APLICADA EXITOSAMENTE
-Fecha: 2026-01-17
-Estado: PRODUCCIÓN
+Fecha: 17 Enero 2026
+Proyecto: CompraAgil_VB
+Migración: 20260117000000_add_costo_neto_margen_comercial_inventory.sql
 
-───────────────────────────────────────────────────────────────
-CAMBIOS EN BASE DE DATOS
-───────────────────────────────────────────────────────────────
+CAMBIOS APLICADOS:
 
-📦 TABLA: inventory
-  ✅ Nuevo campo: costo_neto (NUMERIC NOT NULL)
-     - Costo de adquisición del producto
-     - Migración: Productos existentes → 80% del precio
-  
-  ✅ Nuevo campo: margen_comercial (NUMERIC)
-     - Calculado automáticamente: (precio - costo) / precio * 100
-     - Actualización: Trigger automático
+- Tabla inventory: 2 campos nuevos (costo_neto, margen_comercial)
+- Tabla user_settings: 1 campo nuevo (regiones_config)
+- 1 función creada: calcular_margen_comercial()
+- 1 trigger creado: trigger_update_margen_comercial
+- 1 índice creado: idx_inventory_margen_comercial
 
-📦 TABLA: user_settings
-  ✅ Nuevo campo: regiones_config (JSONB)
-     - Configuración de regiones con recargos
-     - Estructura: [{"nombre": "Metropolitana", "activa": true, "recargo_porcentaje": 0}]
-     - Migración: Datos de 'regions' migrados automáticamente
-
-───────────────────────────────────────────────────────────────
-FUNCIONES Y TRIGGERS
-───────────────────────────────────────────────────────────────
-
-🔧 Función: calcular_margen_comercial(precio, costo)
-   - Calcula margen comercial automáticamente
-   - Validaciones: precio > 0, costo >= 0, precio > costo
-
-🔧 Trigger: trigger_update_margen_comercial
-   - Tabla: inventory
-   - Evento: BEFORE INSERT OR UPDATE OF precio_unitario, costo_neto
-   - Acción: Actualiza margen_comercial automáticamente
-
-───────────────────────────────────────────────────────────────
-ÍNDICES
-───────────────────────────────────────────────────────────────
-
-📊 idx_inventory_margen_comercial
-   - Búsquedas optimizadas por margen comercial
-   - Condición: WHERE margen_comercial IS NOT NULL
-
-───────────────────────────────────────────────────────────────
-FUNCIONALIDADES HABILITADAS
-───────────────────────────────────────────────────────────────
-
-✅ Cálculo automático de margen comercial
-✅ Configuración de regiones con recargos (0-100%)
-✅ Filtrado automático de compras por regiones
-✅ Aplicación automática de recargos en propuestas
-✅ Información valiosa completa en matches:
-   - Buen pagador / Mal pagador
-   - Ubicación / Región
-   - Fecha de cierre con días restantes
-   - % Presupuesto usado
-
-───────────────────────────────────────────────────────────────
-VERIFICACIÓN
-───────────────────────────────────────────────────────────────
-
-✅ Campos creados correctamente
-✅ Trigger funcionando
-✅ Función disponible
-✅ Datos migrados (productos existentes)
-✅ Índices creados
-✅ Sin errores críticos
-
-───────────────────────────────────────────────────────────────
-ESTADO FINAL
-───────────────────────────────────────────────────────────────
-
-🎉 SISTEMA OPERATIVO EN PRODUCCIÓN
-
-Los clientes pueden usar todas las funcionalidades nuevas:
-- Cargar productos con costo neto
-- Ver margen comercial automático
-- Configurar regiones y recargos
-- Filtrar compras inteligentemente
-- Generar propuestas con precios ajustados
-
-───────────────────────────────────────────────────────────────
-
-Versión: 20260117000000
-Última actualización: 2026-01-17
+ESTADO: ✅ Migración aplicada exitosamente
+ARCHIVO: mercadopublico-scraper/agile-bidder/supabase/migrations/20260117000000_add_costo_neto_margen_comercial_inventory.sql
