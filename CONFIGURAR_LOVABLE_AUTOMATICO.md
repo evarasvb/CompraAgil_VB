@@ -22,48 +22,70 @@ Configurar la conexión automática de GitHub a Lovable para que **cada push** a
 
 ## ✅ **PASO 2: Configurar Lovable Dashboard**
 
-### **2.1. Conectar Repositorio:**
+### **2.1. Conectar Repositorio (IMPORTANTE - Solo rama `main`):**
+
+**⚠️ IMPORTANTE:** Lovable solo sincroniza la rama `main`. Los cambios en otras ramas no se reflejan hasta que se hagan merge a `main`.
 
 1. **Abre Lovable Dashboard:**
    - Ve a: https://lovable.dev
    - Inicia sesión con tu cuenta
 
-2. **Ve a tu Proyecto:**
-   - Selecciona el proyecto de `agile-bidder`
-   - O crea uno nuevo si no existe
+2. **Ve a Settings → Connectors / GitHub:**
+   - ✅ Click en "Connect GitHub"
+   - ✅ Autoriza vía OAuth (Lovable obtiene acceso a tu cuenta de GitHub)
 
-3. **Settings → GitHub Connection:**
-   - ✅ Conecta con GitHub
-   - ✅ Autoriza acceso al repositorio `evarasvb/agile-bidder`
-   - ✅ Selecciona la rama: `main`
-   - ✅ Carpeta raíz: `/` (raíz del repositorio)
+3. **Instala la Lovable GitHub App:**
+   - ✅ Instala la app de Lovable en tu organización/cuenta
+   - ✅ Puedes dar acceso a todos los repos o solo a `agile-bidder`
 
-### **2.2. Configurar Auto-Deploy:**
+4. **Conecta tu Proyecto:**
+   - ✅ Selecciona org/cuenta: `evarasvb`
+   - ✅ Selecciona repositorio: `agile-bidder`
+   - ✅ Confirma la conexión
+   - ✅ La sincronización comienza automáticamente (solo rama `main`)
 
-1. **Settings → Deployment:**
-   - ✅ Activa "Auto Deploy on Push"
-   - ✅ Selecciona rama: `main`
+### **2.2. Configurar Auto-Deploy (Lovable tiene su propio hosting):**
+
+**Lovable tiene hosting integrado**, pero si quieres usar otro (Vercel, Netlify, etc.):
+
+1. **Si usas hosting de Lovable:**
+   - ✅ Los deployments son automáticos cuando haces push a `main`
+   - ✅ No necesitas configuración adicional
+
+2. **Si usas hosting externo (Vercel/Netlify):**
+   - ✅ Conecta el repositorio `evarasvb/agile-bidder` en tu hosting
+   - ✅ Configura para monitorear rama `main`
    - ✅ Build command: `npm run build`
    - ✅ Output directory: `dist`
 
-2. **Settings → Environment Variables:**
+3. **Settings → Environment Variables (en Lovable o tu hosting):**
    - ✅ `VITE_SUPABASE_URL` = `https://euzqadopjvdszcdjegmo.supabase.co`
    - ✅ `VITE_SUPABASE_PUBLISHABLE_KEY` = (tu clave anon de Supabase)
 
+**⚠️ NOTA:** Lovable NO exporta archivos `.env` o credenciales. Debes configurar las variables de entorno manualmente en tu hosting.
+
 ---
 
-## ✅ **PASO 3: Verificar Webhook de GitHub (Automático)**
+## ✅ **PASO 3: Verificar Sincronización Bidireccional**
 
-Lovable crea automáticamente un webhook en GitHub cuando conectas el repositorio.
+**Lovable sincroniza de forma bidireccional:**
+- ✅ **Lovable → GitHub:** Cambios en Lovable se pushean a `main`
+- ✅ **GitHub → Lovable:** Cambios en `main` se sincronizan a Lovable
+
+**La Lovable GitHub App crea automáticamente:**
+- ✅ Webhooks necesarios
+- ✅ Permisos de lectura/escritura
+- ✅ Sincronización automática
 
 **Para verificar:**
-1. Ve a: `https://github.com/evarasvb/agile-bidder/settings/hooks`
-2. Debe aparecer un webhook de Lovable
+1. Ve a: `https://github.com/evarasvb/agile-bidder/settings/installations`
+2. Debe aparecer "Lovable" en las apps instaladas
 3. Estado: ✅ Activo
 
-**Si no aparece:**
-- Re-conecta el repositorio en Lovable
-- O crea el webhook manualmente (ver abajo)
+**⚠️ IMPORTANTE:** 
+- No renombres, muevas o elimines el repositorio - rompe la sincronización
+- No uses `git push --force` - puede causar problemas de sincronización
+- Solo la rama `main` se sincroniza automáticamente
 
 ---
 
