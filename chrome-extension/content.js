@@ -2,75 +2,125 @@
 // Se ejecuta automaticamente en buscador.mercadopublico.cl/compra-agil
 
 const SUPABASE_URL = 'https://juiskeeutbaipwbeeezw.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4OTg2ODQsImV4cCI6MjA4MzQ3NDY4NH0.RLiTsgTl5Xbh1NetQIOB3tBH1EQa9ehcHfWIa4MJWf4';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU0MTk2NTYsImV4cCI6MjA1MDk5NTY1Nn0.EwCkMvbGWChwM95RZwlNr7tHvl2TxZCbKe3Flx17KFI';
 
 let syncedCodes = new Set();
 let isExtracting = false;
 
-// Funcion para parsear fecha chilena
+console.log('[FirmaVB] Extension activa');
+
+// Funcion para parsear fecha chilena (DD/MM/YYYY)
 function parseDate(dateStr) {
+  if (!dateStr) return null;
   try {
-    const match = dateStr.match(/(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/);
+    const match = dateStr.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
     if (match) {
       const [, day, month, year] = match;
-      const timeMatch = dateStr.match(/(\d{1,2}):(\d{2})/);
-      const hour = timeMatch ? timeMatch[1].padStart(2,'0') : '00';
-      const minute = timeMatch ? timeMatch[2] : '00';
-      return `${year}-${month}-${day.padStart(2,'0')}T${hour}:${minute}:00-03:00`;
+      return `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}T00:00:00-03:00`;
     }
   } catch (e) {}
   return null;
 }
 
-// Extraer compras del listado
+// Funcion para parsear monto chileno ($ 700.000)
+function parseMonto(montoStr) {
+  if (!montoStr) return null;
+  try {
+    const cleaned = montoStr.replace(/[$\s.]/g, '').replace(',', '.');
+    const num = parseInt(cleaned);
+    return isNaN(num) ? null : num;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Extraer compras del listado - Version mejorada
 function extractComprasFromListado() {
   const compras = [];
-  const links = document.querySelectorAll('a[href*="/ficha?code="]');
   
-  links.forEach(link => {
+  // Buscar todos los codigos de compra agil (patron: XXXXXX-XX-COTXX o similar)
+  const allElements = document.querySelectorAll('*');
+  const codigoPattern = /^\d+-\d+-COT\d+$/i;
+  
+  const codigoElements = [];
+  allElements.forEach(el => {
+    const text = el.innerText?.trim();
+    if (text && codigoPattern.test(text) && el.children.length === 0) {
+      codigoElements.push(el);
+    }
+  });
+  
+  console.log('[FirmaVB] Codigos encontrados:', codigoElements.length);
+  
+  codigoElements.forEach(codigoEl => {
     try {
-      const href = link.getAttribute('href') || '';
-      const codeMatch = href.match(/code=([A-Z0-9\-]+)/i);
-      if (!codeMatch) return;
+      const codigo = codigoEl.innerText.trim();
       
-      const codigo = codeMatch[1];
       if (syncedCodes.has(codigo)) return;
       
-      // Buscar contenedor padre
-      let container = link;
-      for (let i = 0; i < 5; i++) {
-        if (container.parentElement) container = container.parentElement;
+      // Buscar el contenedor padre de la tarjeta (subiendo varios niveles)
+      let card = codigoEl.parentElement;
+      for (let i = 0; i < 10 && card; i++) {
+        if (card.innerText && card.innerText.includes('Publicada el') && card.innerText.includes('Finaliza el')) {
+          break;
+        }
+        card = card.parentElement;
       }
       
-      const text = container.innerText || '';
-      const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      if (!card) return;
       
+      const cardText = card.innerText || '';
+      
+      // Extraer titulo (heading despues del codigo)
       let nombre = '';
-      let estado = 'Publicada';
+      const headings = card.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      for (const h of headings) {
+        const hText = h.innerText?.trim();
+        if (hText && !hText.match(/^\d/) && !hText.includes('$') && hText.length > 10) {
+          nombre = hText;
+          break;
+        }
+      }
+      if (!nombre) nombre = codigo;
+      
+      // Extraer fechas
       let fechaPub = null;
       let fechaCierre = null;
+      const fechaMatches = cardText.match(/(\d{2}\/\d{2}\/\d{4})/g);
+      if (fechaMatches && fechaMatches.length >= 1) {
+        fechaPub = parseDate(fechaMatches[0]);
+        if (fechaMatches.length >= 2) {
+          fechaCierre = parseDate(fechaMatches[1]);
+        }
+      }
+      
+      // Extraer monto
       let monto = null;
+      const montoMatch = cardText.match(/\$\s*[\d.,]+/);
+      if (montoMatch) {
+        monto = parseMonto(montoMatch[0]);
+      }
+      
+      // Extraer organismo (texto largo en mayusculas)
       let organismo = '';
+      const lines = cardText.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 20 && trimmed === trimmed.toUpperCase() && !trimmed.includes('$')) {
+          organismo = trimmed;
+          break;
+        }
+      }
       
-      lines.forEach(line => {
-        if (line.match(/publicada|recibiendo|cerrada|adjudicada/i)) {
-          estado = line.split(' ')[0];
-        }
-        if (line.match(/\d{2}\/\d{2}\/\d{4}/)) {
-          if (!fechaPub) fechaPub = parseDate(line);
-          else if (!fechaCierre) fechaCierre = parseDate(line);
-        }
-        if (line.match(/\$\s*[\d.,]+/)) {
-          const m = line.match(/\$\s*([\d.,]+)/);
-          if (m) monto = parseInt(m[1].replace(/\./g, '').replace(',', ''));
-        }
-        if (line.match(/COT\d+$/i) && !nombre) nombre = line;
-      });
-      
-      // Buscar titulo
-      const titleEl = container.querySelector('h3, h4, [class*="title"]');
-      if (!nombre && titleEl) nombre = titleEl.innerText;
-      if (!nombre) nombre = codigo;
+      // Extraer estado
+      let estado = 'Publicada';
+      if (cardText.includes('Recibiendo cotizaciones')) {
+        estado = 'Recibiendo cotizaciones';
+      } else if (cardText.includes('Cerrada')) {
+        estado = 'Cerrada';
+      } else if (cardText.includes('Adjudicada')) {
+        estado = 'Adjudicada';
+      }
       
       compras.push({
         codigo,
@@ -82,8 +132,9 @@ function extractComprasFromListado() {
         monto_estimado: monto,
         nombre_organismo: organismo,
         region: null,
-        url_ficha: `https://buscador.mercadopublico.cl/ficha?code=${codigo}`
+        url_ficha: `https://buscador.mercadopublico.cl/compra-agil/ficha?code=${codigo}`
       });
+      
     } catch (e) {
       console.error('[FirmaVB] Error extrayendo:', e);
     }
@@ -92,55 +143,11 @@ function extractComprasFromListado() {
   return compras;
 }
 
-// Extraer detalle de ficha individual
-function extractFichaDetalle() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const codigo = urlParams.get('code');
-  if (!codigo || syncedCodes.has(codigo)) return null;
-  
-  try {
-    const nombre = document.querySelector('h1, h2, [class*="title"]')?.innerText || codigo;
-    const descripcionEl = document.querySelector('[class*="descripcion"], [class*="description"]');
-    const descripcion = descripcionEl?.innerText || '';
-    
-    // Buscar campos especificos
-    const getText = (label) => {
-      const el = [...document.querySelectorAll('*')].find(e => 
-        e.innerText?.toLowerCase().includes(label.toLowerCase())
-      );
-      return el?.nextElementSibling?.innerText || el?.parentElement?.innerText?.replace(label, '').trim() || '';
-    };
-    
-    const estado = document.querySelector('[class*="estado"], [class*="badge"]')?.innerText || 'Publicada';
-    const organismo = getText('organismo') || getText('institucion');
-    const presupuesto = getText('presupuesto');
-    let monto = null;
-    if (presupuesto) {
-      const m = presupuesto.match(/\$\s*([\d.,]+)/);
-      if (m) monto = parseInt(m[1].replace(/\./g, '').replace(',', ''));
-    }
-    
-    return {
-      codigo,
-      nombre: nombre.substring(0, 500),
-      descripcion: descripcion.substring(0, 2000),
-      estado,
-      fecha_publicacion: new Date().toISOString(),
-      fecha_cierre: null,
-      monto_estimado: monto,
-      nombre_organismo: organismo,
-      region: null,
-      url_ficha: window.location.href
-    };
-  } catch (e) {
-    console.error('[FirmaVB] Error en ficha:', e);
-    return null;
-  }
-}
-
 // Enviar a Supabase
 async function syncToSupabase(compras) {
   if (!compras || compras.length === 0) return { success: true, count: 0 };
+  
+  console.log('[FirmaVB] Sincronizando', compras.length, 'compras a Supabase');
   
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_compras_agiles_batch`, {
@@ -150,90 +157,103 @@ async function syncToSupabase(compras) {
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
       },
-      body: JSON.stringify({ p_compras: compras })
+      body: JSON.stringify({ compras })
     });
     
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    
     const result = await response.json();
+    console.log('[FirmaVB] Resultado sync:', result);
+    
+    // Marcar como sincronizados
     compras.forEach(c => syncedCodes.add(c.codigo));
     
-    chrome.runtime.sendMessage({
-      type: 'SYNC_COMPLETE',
-      count: compras.length,
-      success: result.success !== false
-    }).catch(() => {});
+    // Notificar al background
+    chrome.runtime.sendMessage({ 
+      type: 'SYNC_COMPLETE', 
+      count: compras.length 
+    });
     
     return result;
   } catch (error) {
-    console.error('[FirmaVB] Error sync:', error);
-    return { success: false, error: error.message };
+    console.error('[FirmaVB] Error en sync:', error);
+    chrome.runtime.sendMessage({ 
+      type: 'SYNC_ERROR', 
+      error: error.message 
+    });
+    throw error;
   }
 }
 
-// Mostrar indicador
-function showIndicator(count, success) {
-  const old = document.getElementById('firmavb-indicator');
-  if (old) old.remove();
-  
-  const div = document.createElement('div');
-  div.id = 'firmavb-indicator';
-  div.style.cssText = `
-    position: fixed; bottom: 20px; right: 20px;
-    background: ${success ? '#10b981' : '#ef4444'};
-    color: white; padding: 12px 20px; border-radius: 8px;
-    font-family: system-ui; font-size: 14px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 999999;
-  `;
-  div.textContent = success ? `FirmaVB: ${count} compras sincronizadas` : 'Error sincronizando';
-  document.body.appendChild(div);
-  setTimeout(() => div.remove(), 4000);
-}
-
-// Principal
-async function main() {
+// Ejecutar extraccion y sincronizacion
+async function runExtraction() {
   if (isExtracting) return;
   isExtracting = true;
   
   try {
-    await new Promise(r => setTimeout(r, 2000));
-    
-    let compras = [];
-    
-    if (window.location.pathname.includes('/ficha')) {
-      const ficha = extractFichaDetalle();
-      if (ficha) compras = [ficha];
-    } else {
-      compras = extractComprasFromListado();
-    }
-    
-    console.log(`[FirmaVB] Encontradas ${compras.length} compras`);
+    const compras = extractComprasFromListado();
+    console.log('[FirmaVB] Encontradas', compras.length, 'compras nuevas');
     
     if (compras.length > 0) {
-      const result = await syncToSupabase(compras);
-      showIndicator(compras.length, result.success !== false);
+      await syncToSupabase(compras);
     }
+  } catch (e) {
+    console.error('[FirmaVB] Error en extraccion:', e);
   } finally {
     isExtracting = false;
   }
 }
 
-// Observar cambios
-const observer = new MutationObserver(() => {
-  clearTimeout(window.firmavbTimer);
-  window.firmavbTimer = setTimeout(main, 2000);
-});
+// Esperar a que la pagina cargue completamente
+function waitForResults() {
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const maxAttempts = 30;
+    
+    const check = () => {
+      attempts++;
+      // Buscar indicadores de que los resultados cargaron
+      const hasResults = document.body.innerText.includes('resultados para tu búsqueda') ||
+                         document.body.innerText.includes('COT');
+      
+      if (hasResults || attempts >= maxAttempts) {
+        resolve();
+      } else {
+        setTimeout(check, 500);
+      }
+    };
+    
+    check();
+  });
+}
 
-console.log('[FirmaVB] Extension activa');
-main();
-observer.observe(document.body, { childList: true, subtree: true });
+// Iniciar cuando la pagina este lista
+async function init() {
+  console.log('[FirmaVB] Esperando carga de resultados...');
+  await waitForResults();
+  console.log('[FirmaVB] Pagina cargada, extrayendo...');
+  await runExtraction();
+}
 
-// Mensajes
-chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-  if (msg.type === 'MANUAL_SYNC') {
-    syncedCodes.clear();
-    main().then(() => respond({ success: true }));
+// Escuchar mensajes del popup para sincronizacion manual
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'MANUAL_SYNC') {
+    runExtraction().then(() => {
+      sendResponse({ success: true });
+    }).catch(e => {
+      sendResponse({ success: false, error: e.message });
+    });
     return true;
   }
-  if (msg.type === 'GET_STATUS') {
-    respond({ synced: syncedCodes.size });
-  }
 });
+
+// Ejecutar
+if (window.location.pathname.includes('/compra-agil')) {
+  // Esperar un poco para que React renderice
+  setTimeout(init, 2000);
+}
+
+console.log('[FirmaVB] Content script cargado');
