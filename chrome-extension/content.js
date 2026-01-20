@@ -2,7 +2,7 @@
 // Se ejecuta automaticamente en buscador.mercadopublico.cl/compra-agil
 
 const SUPABASE_URL = 'https://juiskeeutbaipwbeeezw.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU0MTk2NTYsImV4cCI6MjA1MDk5NTY1Nn0.EwCkMvbGWChwM95RZwlNr7tHvl2TxZCbKe3Flx17KFI';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjQ2OTkxNzAsImV4cCI6MjA0MDI3NTE3MH0.m6IZaWo91s9aOMpIX1rJ7l5D1k01CJQ0u0K7dF3p2XY';
 
 let syncedCodes = new Set();
 let isExtracting = false;
@@ -34,120 +34,130 @@ function parseMonto(montoStr) {
   }
 }
 
-// Extraer compras del listado - Version mejorada
-function extractComprasFromListado() {
+// Extraer compras usando la estructura real del DOM
+function extractCompras() {
   const compras = [];
   
-  // Buscar todos los codigos de compra agil (patron: XXXXXX-XX-COTXX o similar)
+  // Buscar todos los elementos de texto en la pagina
   const allElements = document.querySelectorAll('*');
-  const codigoPattern = /^\d+-\d+-COT\d+$/i;
+  const textNodes = [];
   
-  const codigoElements = [];
   allElements.forEach(el => {
-    const text = el.innerText?.trim();
-    if (text && codigoPattern.test(text) && el.children.length === 0) {
-      codigoElements.push(el);
+    if (el.childNodes.length === 1 && el.childNodes[0].nodeType === Node.TEXT_NODE) {
+      const text = el.textContent.trim();
+      if (text) {
+        textNodes.push({ element: el, text: text });
+      }
     }
   });
   
+  // Buscar codigos COT (patron: XXXXXX-XX-COTXX o similar)
+  const codigoPattern = /^\d+-\d+-COT\d+$/;
+  const codigoElements = textNodes.filter(n => codigoPattern.test(n.text));
+  
   console.log('[FirmaVB] Codigos encontrados:', codigoElements.length);
   
-  codigoElements.forEach(codigoEl => {
+  codigoElements.forEach(codigoNode => {
     try {
-      const codigo = codigoEl.innerText.trim();
+      const codigo = codigoNode.text;
+      const codigoEl = codigoNode.element;
       
-      if (syncedCodes.has(codigo)) return;
-      
-      // Buscar el contenedor padre de la tarjeta (subiendo varios niveles)
-      let card = codigoEl.parentElement;
-      for (let i = 0; i < 10 && card; i++) {
-        if (card.innerText && card.innerText.includes('Publicada el') && card.innerText.includes('Finaliza el')) {
+      // Buscar el contenedor padre (tarjeta de compra)
+      let container = codigoEl.parentElement;
+      for (let i = 0; i < 10 && container; i++) {
+        if (container.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]')) {
           break;
         }
-        card = card.parentElement;
+        container = container.parentElement;
       }
       
-      if (!card) return;
+      if (!container) container = codigoEl.parentElement?.parentElement?.parentElement;
       
-      const cardText = card.innerText || '';
-      
-      // Extraer titulo (heading despues del codigo)
-      let nombre = '';
-      const headings = card.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      // Buscar titulo (heading cerca del codigo)
+      let titulo = '';
+      const headings = container?.querySelectorAll('h1, h2, h3, h4, h5, h6') || [];
       for (const h of headings) {
-        const hText = h.innerText?.trim();
-        if (hText && !hText.match(/^\d/) && !hText.includes('$') && hText.length > 10) {
-          nombre = hText;
-          break;
-        }
-      }
-      if (!nombre) nombre = codigo;
-      
-      // Extraer fechas
-      let fechaPub = null;
-      let fechaCierre = null;
-      const fechaMatches = cardText.match(/(\d{2}\/\d{2}\/\d{4})/g);
-      if (fechaMatches && fechaMatches.length >= 1) {
-        fechaPub = parseDate(fechaMatches[0]);
-        if (fechaMatches.length >= 2) {
-          fechaCierre = parseDate(fechaMatches[1]);
-        }
-      }
-      
-      // Extraer monto
-      let monto = null;
-      const montoMatch = cardText.match(/\$\s*[\d.,]+/);
-      if (montoMatch) {
-        monto = parseMonto(montoMatch[0]);
-      }
-      
-      // Extraer organismo (texto largo en mayusculas)
-      let organismo = '';
-      const lines = cardText.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.length > 20 && trimmed === trimmed.toUpperCase() && !trimmed.includes('$')) {
-          organismo = trimmed;
+        const hText = h.textContent.trim();
+        // El titulo no es una fecha ni un monto
+        if (hText && !hText.match(/^\d{2}\/\d{2}\/\d{4}$/) && !hText.match(/^\$\s/)) {
+          titulo = hText;
           break;
         }
       }
       
-      // Extraer estado
-      let estado = 'Publicada';
-      if (cardText.includes('Recibiendo cotizaciones')) {
-        estado = 'Recibiendo cotizaciones';
-      } else if (cardText.includes('Cerrada')) {
-        estado = 'Cerrada';
-      } else if (cardText.includes('Adjudicada')) {
-        estado = 'Adjudicada';
-      }
-      
-      compras.push({
-        codigo,
-        nombre: nombre.substring(0, 500),
-        descripcion: '',
-        estado,
-        fecha_publicacion: fechaPub || new Date().toISOString(),
-        fecha_cierre: fechaCierre,
-        monto_estimado: monto,
-        nombre_organismo: organismo,
-        region: null,
-        url_ficha: `https://buscador.mercadopublico.cl/compra-agil/ficha?code=${codigo}`
+      // Buscar fechas (formato DD/MM/YYYY en headings)
+      const fechaHeadings = [];
+      headings.forEach(h => {
+        const hText = h.textContent.trim();
+        if (hText.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+          fechaHeadings.push(hText);
+        }
       });
       
+      const fechaPublicacion = fechaHeadings[0] || '';
+      const fechaCierre = fechaHeadings[1] || '';
+      
+      // Buscar presupuesto ($ XXX.XXX en headings)
+      let presupuesto = null;
+      headings.forEach(h => {
+        const hText = h.textContent.trim();
+        if (hText.match(/^\$\s/)) {
+          presupuesto = parseMonto(hText);
+        }
+      });
+      
+      // Buscar organismo (texto largo con mayusculas)
+      let organismo = '';
+      const allTexts = container?.querySelectorAll('*') || [];
+      for (const el of allTexts) {
+        if (el.childNodes.length === 1 && el.childNodes[0].nodeType === Node.TEXT_NODE) {
+          const txt = el.textContent.trim();
+          // Organismo: texto largo, mayusculas, no es codigo ni fecha
+          if (txt.length > 15 && txt === txt.toUpperCase() && 
+              !codigoPattern.test(txt) && !txt.includes('/') && !txt.includes('$')) {
+            organismo = txt;
+            break;
+          }
+        }
+      }
+      
+      // Solo agregar si tenemos codigo y titulo
+      if (codigo && titulo) {
+        compras.push({
+          codigo: codigo,
+          titulo: titulo,
+          organismo: organismo,
+          fecha_publicacion: parseDate(fechaPublicacion),
+          fecha_cierre: parseDate(fechaCierre),
+          presupuesto: presupuesto,
+          estado: 'publicada',
+          url: `https://buscador.mercadopublico.cl/compra-agil/${codigo}`
+        });
+      }
     } catch (e) {
-      console.error('[FirmaVB] Error extrayendo:', e);
+      console.error('[FirmaVB] Error procesando compra:', e);
     }
   });
   
   return compras;
 }
 
-// Enviar a Supabase
+// Sincronizar con Supabase
 async function syncToSupabase(compras) {
-  if (!compras || compras.length === 0) return { success: true, count: 0 };
+  if (compras.length === 0) {
+    console.log('[FirmaVB] No hay compras nuevas para sincronizar');
+    return { success: true, count: 0 };
+  }
   
-  console.log('[FirmaVB] Sincronizando', compras.length, 'compras a Supabase');
+  // Filtrar las que ya fueron sincronizadas
+  const nuevas = compras.filter(c => !syncedCodes.has(c.codigo));
+  
+  if (nuevas.length === 0) {
+    console.log('[FirmaVB] Todas las compras ya fueron sincronizadas');
+    return { success: true, count: 0 };
+  }
+  
+  console.log('[FirmaVB] Sincronizando', nuevas.length, 'compras nuevas...');
   
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_compras_agiles_batch`, {
@@ -157,67 +167,55 @@ async function syncToSupabase(compras) {
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
       },
-      body: JSON.stringify({ compras })
+      body: JSON.stringify({ compras_data: nuevas })
     });
     
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    if (response.ok) {
+      nuevas.forEach(c => syncedCodes.add(c.codigo));
+      console.log('[FirmaVB] Sincronizacion exitosa:', nuevas.length, 'compras');
+      return { success: true, count: nuevas.length };
+    } else {
+      const error = await response.text();
+      console.error('[FirmaVB] Error en sincronizacion:', error);
+      return { success: false, error: error };
     }
-    
-    const result = await response.json();
-    console.log('[FirmaVB] Resultado sync:', result);
-    
-    // Marcar como sincronizados
-    compras.forEach(c => syncedCodes.add(c.codigo));
-    
-    // Notificar al background
-    chrome.runtime.sendMessage({ 
-      type: 'SYNC_COMPLETE', 
-      count: compras.length 
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('[FirmaVB] Error en sync:', error);
-    chrome.runtime.sendMessage({ 
-      type: 'SYNC_ERROR', 
-      error: error.message 
-    });
-    throw error;
+  } catch (e) {
+    console.error('[FirmaVB] Error de red:', e);
+    return { success: false, error: e.message };
   }
 }
 
-// Ejecutar extraccion y sincronizacion
+// Ejecutar extraccion
 async function runExtraction() {
   if (isExtracting) return;
   isExtracting = true;
   
   try {
-    const compras = extractComprasFromListado();
-    console.log('[FirmaVB] Encontradas', compras.length, 'compras nuevas');
+    const compras = extractCompras();
+    console.log('[FirmaVB] Encontradas', compras.length, 'compras');
     
     if (compras.length > 0) {
-      await syncToSupabase(compras);
+      console.log('[FirmaVB] Primera compra:', compras[0]);
+      const result = await syncToSupabase(compras);
+      return result;
     }
-  } catch (e) {
-    console.error('[FirmaVB] Error en extraccion:', e);
+    return { success: true, count: 0 };
   } finally {
     isExtracting = false;
   }
 }
 
-// Esperar a que la pagina cargue completamente
+// Esperar a que la pagina cargue resultados
 function waitForResults() {
   return new Promise((resolve) => {
+    const maxAttempts = 20;
     let attempts = 0;
-    const maxAttempts = 30;
     
     const check = () => {
       attempts++;
       // Buscar indicadores de que los resultados cargaron
       const hasResults = document.body.innerText.includes('resultados para tu búsqueda') ||
-                         document.body.innerText.includes('COT');
+                        document.body.innerText.includes('COT');
       
       if (hasResults || attempts >= maxAttempts) {
         resolve();
@@ -255,5 +253,3 @@ if (window.location.pathname.includes('/compra-agil')) {
   // Esperar un poco para que React renderice
   setTimeout(init, 2000);
 }
-
-console.log('[FirmaVB] Content script cargado');
