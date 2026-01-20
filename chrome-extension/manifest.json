@@ -3,7 +3,10 @@
   "name": "CompraAgil FirmaVB",
   "version": "1.0.0",
   "description": "Sincroniza compras agiles de MercadoPublico con FirmaVB en tiempo real",
-  "permissions": ["storage", "activeTab"],
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
   "host_permissions": [
     "https://buscador.mercadopublico.cl/*",
     "https://juiskeeutbaipwbeeezw.supabase.co/*"
@@ -14,8 +17,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://buscador.mercadopublico.cl/compra-agil*", "https://buscador.mercadopublico.cl/ficha*"],
-      "js": ["content.js", "scraper.js"]
+      "matches": [
+        "https://buscador.mercadopublico.cl/compra-agil*"
+      ],
+      "js": [
+        "scraper.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
