@@ -1,13 +1,14 @@
-// CompraAgil FirmaVB - Content Script V3
+// CompraAgil FirmaVB - Content Script V4
 // Orquesta el scraping y sincroniza con Supabase
+// Fix: API key actualizada
 
 const SUPABASE_URL = 'https://juiskeeutbaipwbeeezw.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjQ2OTkxNzAsImV4cCI6MjA0MDI3NTE3MH0.m6IZaWo91s9aOMpIX1rJ7l5D1k01CJQ0u0K7dF3p2XY';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1aXNrZWV1dGJhaXB3YmVlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU0MTk2NTYsImV4cCI6MjA1MDk5NTY1Nn0.EwCkMvbGWChwM95RZwlNr7tHvl2TxZCbKe3Flx17KFI';
 
 let syncedCodes = new Set();
 let isProcessing = false;
 
-console.log('[FirmaVB] Content script cargado en:', window.location.href);
+console.log('[FirmaVB] Content script V4 cargado en:', window.location.href);
 
 // Esperar a que el scraper este disponible
 function waitForScraper() {
