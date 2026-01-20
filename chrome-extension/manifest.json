@@ -15,7 +15,7 @@
   "content_scripts": [
     {
       "matches": ["https://buscador.mercadopublico.cl/compra-agil*", "https://buscador.mercadopublico.cl/ficha*"],
-      "js": ["content.js"],
+      "js": ["content.js", "scraper.js"]
       "run_at": "document_idle"
     }
   ],
