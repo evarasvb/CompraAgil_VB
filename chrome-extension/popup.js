@@ -1,4 +1,5 @@
-// Popup script para CompraAgil Extension
+// Popup script para CompraAgil Extension V2
+// Corregido: manejo de errores de conexión
 
 document.addEventListener('DOMContentLoaded', () => {
   const statusText = document.getElementById('statusText');
@@ -7,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const syncNowBtn = document.getElementById('syncNow');
   const openMercadoBtn = document.getElementById('openMercado');
   
-  // Cargar estado inicial
+  // Cargar estado inicial con manejo de errores
   loadStatus();
   
   // Botón sincronizar ahora
@@ -22,6 +23,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tabs.length > 0) {
         // Enviar mensaje al content script
         chrome.tabs.sendMessage(tabs[0].id, { type: 'MANUAL_SYNC' }, (response) => {
+          // Verificar si hubo error de conexión
+          if (chrome.runtime.lastError) {
+            console.log('[CompraAgil] Content script no disponible:', chrome.runtime.lastError.message);
+            showError('Recarga la página primero');
+            return;
+          }
+          
           if (response && response.success) {
             syncNowBtn.textContent = 'Sincronizado!';
             setTimeout(() => {
@@ -53,7 +61,21 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   function loadStatus() {
+    // Verificar que chrome.runtime está disponible
+    if (!chrome.runtime || !chrome.runtime.sendMessage) {
+      console.log('[CompraAgil] Chrome runtime no disponible');
+      return;
+    }
+    
     chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
+      // Manejar error de conexión
+      if (chrome.runtime.lastError) {
+        console.log('[CompraAgil] Background no disponible:', chrome.runtime.lastError.message);
+        // Cargar desde storage como fallback
+        loadFromStorage();
+        return;
+      }
+      
       if (response) {
         statusText.textContent = response.isActive ? 'Activo' : 'Inactivo';
         statusText.className = 'status-value ' + (response.isActive ? 'active' : 'inactive');
@@ -66,13 +88,25 @@ document.addEventListener('DOMContentLoaded', () => {
         totalSyncedEl.textContent = response.totalSynced || 0;
       }
     });
-    
-    // También cargar desde storage
-    chrome.storage.local.get(['lastSync', 'syncedCount'], (data) => {
+  }
+  
+  function loadFromStorage() {
+    chrome.storage.local.get(['lastSync', 'syncedCount', 'isActive'], (data) => {
+      if (chrome.runtime.lastError) {
+        console.log('[CompraAgil] Storage error:', chrome.runtime.lastError.message);
+        return;
+      }
+      
+      if (data.isActive !== undefined) {
+        statusText.textContent = data.isActive ? 'Activo' : 'Inactivo';
+        statusText.className = 'status-value ' + (data.isActive ? 'active' : 'inactive');
+      }
+      
       if (data.lastSync) {
         const date = new Date(data.lastSync);
         lastSyncEl.textContent = date.toLocaleString('es-CL');
       }
+      
       if (data.syncedCount) {
         totalSyncedEl.textContent = data.syncedCount;
       }
@@ -90,4 +124,4 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-console.log('[CompraAgil] Popup cargado');
+console.log('[CompraAgil] Popup V2 cargado');
