@@ -264,6 +264,7 @@ Crear dashboard en Lovable para:
 - Monitorear matching confidence
 - Ver oportunidades creadas en Odoo
 - Estado de ofertas enviadas
+- Conducta de pago por institución (vista `conducta_pago_institucion`)
 
 ## 🔥 Comandos Rápidos
 
